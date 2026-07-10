@@ -1,0 +1,68 @@
+# Phase 2 — Source-of-truth capture (per project + phase, background / non-blocking)
+
+> The flow's second phase: **Intake (phase1) → Source-of-truth capture (THIS phase) → Analyze (phase3) → Fix (phase4).** Runs once per project+phase. It captures the **FULL project+phase ground truth** (Confluence spec, Figma, external-link content) into the shared memory repo — **phase-scoped, independent of which tickets were picked**, so the one capture serves every ticket in the phase and fixes match intended design, not just suppress the symptom (supersedes the old per-repo `CLAUDE.md` gate). **This is no longer a blocking gate.** The only synchronous step is the **mandatory ask** for the spec/figma links; the capture/digest itself runs in the **background** while Analyze (phase3) proceeds. Shared machinery it leans on lives in `references/run-blocks.md`; the memory mechanics + file schemas live in `references/helpers/memory.md`. Cross-cutting invariants are SKILL.md **Golden Rules** — cited by tag, not restated.
+
+## When it runs — ask synchronously, capture in the background
+Two parts, in order:
+1. **Ask (synchronous, mandatory).** Collect the spec + figma links from the dev up front — **spec + figma stay mandatory to provide** (see the mandatory rule below). This ask is the **only** blocking part of the phase; the run cannot proceed to Analyze until the dev supplies (or cancels). The dev's provided refs are themselves usable context immediately (phase3 Context-source rule), so analysis never has to wait for the digest.
+2. **Capture (background, non-blocking).** Dispatch the `source-of-truth` subagent to capture the **complete phase ground truth — the FULL spec / figma / external content, NOT scoped to the picked tickets** — as a **background** task (`run_in_background: true`). Do **NOT** WAIT for it before the analyzer (multi: before the fan-out; single: before Fix-3). The one capture serves **every** ticket in the phase — never re-captured per pick, never trimmed to the picked subset. Analyze/Fix read the digest from memory **once it lands**, falling back to the dev's provided refs until then (phase3 Context-source rule). Launch **once per phase per session** (cache the result; skip re-launch on later re-pull turns unless a source is flagged stale **or `metadata.json` still lists a pending external source** → re-attempt the direct read, per the external-sources section below).
+
+## Which phase folder — confirm `<PHASE>` from the spec title
+Before writing anything, resolve `<PHASE>` (it scopes every path: `<PHASE>/doc/`, `<PHASE>/session/`, the `phaseX/` fix-branch prefix):
+- An explicit **`@N` arg** (SKILL.md Mode dispatch) → `phase = phaseN`, authoritative.
+- **No `@N`** → the subagent **reads the Confluence spec page title(s)/parent breadcrumb and derives the phase from it** (a "Phase 3 / Sprint 3 / Milestone 3" marker in the title → `phase3`). The spec title is the source of truth for which phase this work belongs to — do **not** default to `phase1` just because it's the fallback.
+- Only if neither `@N` nor a phase-bearing title exists → `phase1`, and say so.
+- If `@N` and the title disagree, honor `@N` but **surface the mismatch** to the dev. Record the resolved phase in the digest heading (e.g. `# <PROJ> Phase 3 — … Spec Digest`) so a wrong folder is caught early.
+
+## What it captures
+The **FULL phase content** (never a picked-ticket subset). **One `.md` per source** under `project/<PROJ>/<PHASE>/doc/`, each a digest (`status: present`) or — for an external source that couldn't be read — a `pending` placeholder:
+- **`spec.md` (Confluence behavior + copy) — REQUIRED**, **`figma.md` (Figma link + per-screen `node-id`/name/layout notes) — REQUIRED**, **one `<slug>.md` per external source** (each Google Sheet / Drive / external URL the spec references gets its OWN file named for the source — e.g. `ad_script.md`, `iap_pricing.md`; peers of `spec.md`) **— captured whenever the spec references external sources**.
+- **`[RAG]` STRUCTURE every digest for section-retrieval — never a blob.** `spec.md` and `figma.md` MUST be written as: (1) a **TOC at the very top** — a bullet list of `- <anchor-slug> — <screen / feature name>` for every section; then (2) **one `## <anchor-slug> — <screen / feature>` section per screen/feature**, chunked so each is self-contained. The anchor slug is stable kebab-case (e.g. `reader-unlock-sheet`, `home-banner`). This is what lets an analyzer read ONLY its ticket's section (Phase-3 Context-source rule) instead of the whole spec — the retrieval index, no vector store. Keep each section tight; cross-reference rather than duplicate. (`figma.md` sections key on the screen + its `node-id`; `<slug>.md` external sources stay single-purpose, no TOC needed.)
+- **`metadata.json` — the status manifest AND the cache-coherence anchor AND the `[RAG]` retrieval index.** ONE file at `project/<PROJ>/<PHASE>/doc/metadata.json` recording per source: status · version · capturedAt · confirmedBy, **plus a `sections` array — the list of `<anchor-slug>` (+ one-line topic) present in that digest**. A single read tells the gate what's captured / stale / pending AND **which section maps to a ticket's screen/feature — so the analyzer retrieves the right anchor WITHOUT opening the whole digest first**. The keeper rewrites it (status + `sections`) on every gate run that touches a source.
+
+### metadata.json is how local cache reconciles with remote memory — check it FIRST
+At the start of the gate, reconcile the **local cache against remote memory via `metadata.json`** before doing anything else:
+- **No `metadata.json` in remote memory** → **create one**, and **init/make the source of truth from the dev's required input** (ask for the Confluence spec + Figma links per the mandatory rule below), then write `metadata.json` from the captured sources. (If the source digests `spec.md`/`figma.md` already exist but the manifest is missing — a legacy capture — offer to build the manifest from the present digests instead of forcing a full re-init; either way the run ends with a `metadata.json`.)
+- **Local cache outdated vs the remote `metadata.json` version** → **update the local cache from remote** (re-pull / refresh the local mirror) before reading the digests, so analysis runs on the current SOT.
+- **Local matches remote (versions equal, fresh)** → reuse silently.
+
+Runs the memory-keeper `source-of-truth` action (`references/helpers/memory.md`). It reads `metadata.json` to decide per source: present + fresh → reuse; stale (live version newer) → re-capture + bump; absent → capture. Staleness rule + schemas live in `references/helpers/memory.md`.
+- **`spec.md` + `figma.md` are MANDATORY to provide — there is NO skip/waive for these.** No link supplied → **ASK the dev to paste the Confluence + Figma link** and BLOCK the *ask* until both are supplied. The dev may not opt out, and "we don't have it" is not an accepted answer for these two — keep asking (or let the dev cancel the run). Once the links are supplied, the **digest capture runs in the background** — do NOT block analysis waiting for the digest; the provided links are usable context immediately (phase3 Context-source rule).
+
+## External sources inside the spec → each its own peer file `<slug>.md` (read directly; unreadable → flag `pending`, re-try each run; does NOT block — NO request folder)
+A Confluence spec routinely embeds links the Jira/Confluence MCP cannot read — **Google Sheets, Google Drive, external URLs**. **Each such source gets its OWN `.md` file named for it** (e.g. the spec references an "ad script" sheet → `ad_script.md`; an IAP-pricing sheet → `iap_pricing.md`), a peer of `spec.md` at the same `<PHASE>/doc/` level — NOT inlined into `spec.md`, NOT aggregated into one combined file. When distilling the spec, the `source-of-truth` subagent detects every such link, gives it a slug, and **reads it directly**:
+- **Google Sheets** → `WebFetch` the CSV export `https://docs.google.com/spreadsheets/d/<ID>/export?format=csv&gid=<GID>` (follow the 307 redirect to the `googleusercontent.com` export host and fetch that). Works whenever the sheet is link-shared/public.
+- **Google Drive file** → `WebFetch` `https://drive.google.com/uc?export=download&id=<ID>` (follow the 303 redirect to `drive.usercontent.google.com/download?...`). Works for link-shared files; binary (`.mxfile`/image/PDF) → capture a description/digest, note it's binary.
+- Also try any authenticated Google MCP if connected (`Google_Drive`), else WebFetch is the default.
+- **Readable (HTTP 200 / content returned)** → write the content into that source's own `<slug>.md` (`status: present`, `method: auto-direct-read`), add the source to `metadata.json` as `present`, **push**.
+- **Unreadable (HTTP 401 / login / permission-denied)** → write `<slug>.md` with a `status: pending` placeholder (the link URL + a one-line note of what content it holds + the HTTP status seen) and add the source to `metadata.json` as `pending`. **There is NO `requests/` folder and NO co-worker hand-off** — the dev can paste the content straight into that `<slug>.md` if it's needed before a re-try succeeds.
+- The capture does **NOT block** on pending external data: write `spec.md` + every readable `<slug>.md` as `status: present` from the accessible content and **proceed** — analysis runs with available context, the pending sources explicitly flagged so the fixer doesn't silently guess them.
+- **Re-try (every turn that hits the capture, incl. `--resume`):** if `metadata.json` lists any external source still `pending`, the subagent `pull 0`s and **re-attempts the direct read** — now readable → fill its `<slug>.md`, flip it `present` in `metadata.json`, push the updated `<slug>.md` + `metadata.json`; still unreadable → keep flagged, proceed. This is the only case where the capture re-runs work on a later turn despite the per-phase cache.
+
+## Tell the dev WHAT is missing — mandatory, every run (`[VN]`)
+When the gate returns and the SOT is not 100% complete, the orchestrator **must show the dev an itemized "what's missing" report** — never a bare count like *"6 external links"*. The dev has to know precisely what is absent and what to do about it. Print it `[VN]` whenever **any** of these hold (re-pull / cached / `--resume` turns included — re-show it each turn until the gaps close):
+- an external source's `<slug>.md` is still `status: pending` (mirrored in `metadata.json`) — a Google Sheet/Drive/URL the MCP couldn't read, or
+- a required source had to be pasted manually / is partial.
+
+**The SOT is phase-scoped — its only goal is to build/maintain the source of truth, NOT to serve a ticket set.** Report the WHOLE phase's source gaps. **Do NOT tie gaps to tickets** — no "affects tickets" / "Ảnh hưởng vé" / `informs`-ticket column. The report is purely about which source data is present / missing / pending for the phase.
+
+Format — one row per phase gap, with enough to act (NO ticket column):
+```markdown
+⚠️ Source-of-truth chưa đầy đủ — Phase <N> (<PROJ>)
+| Thiếu gì | Nội dung đang chờ | Vì sao thiếu / cách lấy |
+|---|---|---|
+| Google Sheet: IAP (iap_pricing.md) | SKU/giá coin-pack cho auto-burn | Link 401 (không đọc trực tiếp được) — tự thử lại mỗi lượt; hoặc dev dán nội dung vào iap_pricing.md |
+…
+→ Việc dựng source-of-truth VẪN hoàn tất với phần đã đọc được; các ô trên là dữ liệu BỔ SUNG còn chờ (link chưa đọc được), không tự bịa.
+```
+State plainly: which gaps would have **blocked the ask** (a required `spec`/`figma` link the dev never supplied → `blocked`, stop — analysis can't begin without *some* spec/figma input) vs which are **non-blocking** (pending external sources → proceed, flagged). Tell the dev the concrete next step per row — the capture re-attempts the direct read on the next run, or the dev can paste the content into that source's `<slug>.md` themselves. **Do not bury this in a one-liner.**
+
+## Push + return
+Push each touched file as its own commit — `spec.md` / `figma.md` / each external `<slug>.md` plus **`metadata.json`** (always rewritten when any source changed). The background subagent returns one of:
+- **`capturing`** — the mandatory links were supplied and the digest is still being written. This is the normal launch result: Analyze (phase3) proceeds **immediately** on the dev's provided refs and switches to the digest once it lands (Context-source rule). The capture pushes its files when done.
+- **`ready` | `built`** — the digest finished (cached/fresh or freshly captured). A pending external link is **not** a block (the dev supplied the spec; only a downstream Sheet is awaited) — it still returns `ready` **with the itemized "what's missing" report above shown to the dev** (not just a count).
+- **`blocked`** — a **required** source (`spec`/`figma`) link was never supplied at the ask. **On `blocked`, do NOT dispatch analyzers** — surface which required link is missing and stop. The subagent's return MUST carry the structured pending list (per row: what / awaited content / why-unreadable) so the orchestrator can render the table verbatim.
+
+> Confluence + Figma MCP were already provisioned at **init** (the required `MCP_SETUP` step) — at capture time only **re-confirm liveness** (ToolSearch `mcp__confluence__*` / `mcp__figma__*`); do NOT provision/add defs here. Still not live despite init setup (e.g. a connector hiccup) → ask the dev to paste the Confluence/Figma content as the fallback.
+
+Once the mandatory links are supplied (return `capturing`/`ready`/`built`) → proceed to **Phase 3** (`references/phase3-analyze.md`): claim → analyze. Only `blocked` (a missing required link) stops the run.

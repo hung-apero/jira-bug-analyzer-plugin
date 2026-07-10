@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>jira-bug-analyzer — Sơ đồ Mermaid</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --line:#2b3240;
+    --txt:#e6edf3; --mut:#8b949e; --dim:#6e7681; --accent:#58a6ff; --p1:#7c93ff; --code:#0b0f16;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:15px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:34px 20px 70px}
+  code{font-family:ui-monospace,Menlo,Consolas,monospace;background:var(--code);
+    padding:1px 5px;border-radius:5px;font-size:.85em;color:#c9d4e3}
+  h1{font-size:26px;margin:0 0 4px}
+  h1 code{font-size:.62em;color:var(--p1);padding:2px 8px}
+  .lead{color:var(--mut);font-size:13.5px;max-width:80ch;margin:0}
+  .sec{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);
+    font-weight:700;margin:34px 0 10px}
+  .diagram{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;overflow-x:auto}
+  .mermaid{display:flex;justify-content:center}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card h4{margin:0 0 9px;font-size:13.5px}
+  .kv{display:grid;gap:7px}
+  .kv div{font-size:12.5px;color:var(--mut)}
+  .kv .k{display:inline-block;font-family:ui-monospace,monospace;font-size:11px;font-weight:700;
+    color:var(--p1);background:var(--code);padding:1px 6px;border-radius:5px;margin-right:6px}
+  .flags{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  @media(max-width:760px){.flags{grid-template-columns:1fr}}
+  .flag{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-size:12px;color:var(--mut)}
+  .flag code{color:var(--p1);font-weight:700}
+  .flag.off{opacity:.7}
+  .tags{display:flex;flex-wrap:wrap;gap:6px}
+  .tags span{font-size:11px;border:1px solid var(--line);border-radius:20px;padding:3px 9px;color:var(--mut)}
+  .tags b{color:var(--txt)}
+  footer{margin-top:30px;color:var(--dim);font-size:11.5px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1><code>/jira-bug-analyzer</code> — sơ đồ luồng</h1>
+  <p class="lead">Agent harness-loop: kéo bug Jira → phân tích ảnh/video bằng thị giác → chấm điểm tin cậy → sửa trong worktree riêng → kiểm thử trên máy → mở PR. Học vào KB Android dùng chung + chống fix trùng cùng <code>root_cause_slug</code>. Mọi I/O bộ nhớ remote chạy NỀN, không chặn luồng chính.</p>
+
+  <!-- MAIN PIPELINE -->
+  <div class="sec">Pipeline chính — chọn chế độ &amp; 6 giai đoạn</div>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  IN(["/jira-bug-analyzer ARG"]):::start --> MODE{"Gõ gì?"}
+  MODE -->|"KEY-123 → single"| P1
+  MODE -->|"KEY → multi"| P1
+  MODE -->|"--team KEY"| P1
+  MODE -->|"--manager KEY"| MGR["Manager (chế độ 3)<br/>review-comment · dọn worktree · KB-backfill"]:::stop
+
+  P1["<b>G1 · Tiếp nhận</b><br/>chọn chế độ · check env+MCP<br/>auto-wire bộ nhớ (nhận remote, KHÔNG tạo)<br/>thẻ intake: board·status·assignee<br/>chốt base branch → setup.json"]:::p1 --> P2
+  P2["<b>G2 · Nguồn chuẩn (SOT)</b><br/>BẮT BUỘC hỏi spec Confluence + Figma<br/>digest tổng hợp chạy NỀN, không chặn"]:::p2 --> P3
+  P3["<b>G3 · Phân tích</b><br/>Vào: SOT · mô tả Jira · ảnh/video · KB · code<br/>fetch + đọc origin/BASE mới nhất (read-only)<br/>claim → nguyên nhân gốc → kế hoạch → chấm điểm<br/>chống trùng root_cause_slug"]:::p3 --> GATE{"Cổng duyệt"}
+  GATE -->|"chế độ thường: LUÔN hỏi → Duyệt"| P4
+  GATE -->|"--auto, điểm ≥80"| P4
+  GATE -->|"--auto, điểm &lt;80"| DEFER["Hoãn + báo cáo"]:::stop
+
+  P4["<b>G4 · Sửa + build</b><br/>fetch mới → worktree từ origin/BASE mới nhất<br/>sửa đúng kế hoạch đã duyệt<br/>assembleAppDevDebug (cổng XANH)"]:::p4
+  P4 -->|"build đỏ"| P4
+  P4 -->|"Fix-9: không phải code"| CMT["Comment VN → dừng"]:::stop
+  P4 -->|"build XANH (APK)"| P5
+
+  P5["<b>G5 · Kiểm thử</b><br/>1 · review diff trên GitHub web<br/>2 · cài APK G4 (adb) + user kiểm thử<br/>adb tự kiểm thử CHỈ khi --auto"]:::p5
+  P5 -->|"cần chỉnh code"| P4
+  P5 -->|"cần chỉnh kế hoạch"| P3
+  P5 -->|"OK"| P6
+
+  P6["<b>G6 · Commit &amp; PR</b><br/>1 commit/ticket → PR --base BASE (body đủ G3+G5)<br/>Jira: link PR + Resolved (nền) · ghi pr-watch.json<br/>--auto: cả G6 chạy nền, PR mở KHÔNG merge"]:::p6
+  P6 -->|"multi: kéo board lại"| P1
+  P6 --> END(["Xong ticket"]):::start
+
+  classDef start fill:#0b0f16,stroke:#58a6ff,color:#e6edf3;
+  classDef p1 fill:#1b2147,stroke:#7c93ff,color:#e6edf3;
+  classDef p2 fill:#0e2c3a,stroke:#36c5f0,color:#e6edf3;
+  classDef p3 fill:#2a1c40,stroke:#a371f7,color:#e6edf3;
+  classDef p4 fill:#3a2510,stroke:#f0883e,color:#e6edf3;
+  classDef p5 fill:#10301c,stroke:#3fb950,color:#e6edf3;
+  classDef p6 fill:#3a1228,stroke:#db61a2,color:#e6edf3;
+  classDef stop fill:#2c1414,stroke:#f3776e,color:#f3d6d6;
+    </pre>
+  </div>
+
+  <!-- MULTI LOOP -->
+  <div class="sec">Vòng lặp lượt — chế độ multi (điều phối G1–G6)</div>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  K["Kéo board → list nhóm theo lĩnh vực<br/>(rỗng → DỪNG)"] --> PICK["Dev chọn số (≤4/nhóm/lượt, dư hoãn)"]
+  PICK --> SOT["SOT chạy nền (G2), không chặn"]
+  SOT --> CLAIM["Claim TẤT CẢ ticket đã chọn<br/>→ ghi batch-progress.md"]
+  CLAIM --> FAN["Phân tích song song (agent nền)<br/>→ hàng đợi FIFO → duyệt từng cái, nhả sàn ngay"]
+  FAN --> FIX["Mỗi ticket duyệt → 1 fixer nền<br/>sửa + build XANH → ready"]
+  FIX --> REV["Ticket ready → G5 (mở diff) → OK<br/>→ merge nhánh batch NGAY → user kiểm thử"]
+  REV --> PRB["G6 (nền): mở/cập nhật 1 PR batch"]
+  PRB --> Q{"Còn bug?"}
+  Q -->|"có (kéo lại)"| K
+  Q -->|"hết / không chọn"| DONE(["DỪNG"]):::start
+  classDef start fill:#0b0f16,stroke:#58a6ff,color:#e6edf3;
+    </pre>
+  </div>
+
+  <!-- AUTO + MANAGER -->
+  <div class="sec">Vòng tự lái <code>--auto</code></div>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  A["pick<br/>tự chọn ticket"] --> B{"điểm ≥80?"}
+  B -->|"có"| C["verify<br/>code-reviewer + adb<br/>(2× re-fix)"]
+  B -->|"không"| D["hoãn + báo cáo"]:::stop
+  C --> E["ship<br/>commit+PR nền · Discord TẮT<br/>PR mở KHÔNG merge"]
+  E --> F{"board rỗng?"}
+  F -->|"chưa"| A
+  F -->|"rồi"| G(["auto-report → DỪNG"]):::start
+  classDef start fill:#0b0f16,stroke:#58a6ff,color:#e6edf3;
+  classDef stop fill:#2c1414,stroke:#f3776e,color:#f3d6d6;
+    </pre>
+  </div>
+
+  <div class="sec">Manager — <code>--manager &lt;KEY&gt;</code> (chạy sau batch, KHÔNG phải pipeline)</div>
+  <div class="card">
+    <div class="kv">
+      <div><span class="k">Job A</span>gom &amp; xử lý PR review-comment (<code>--auto</code>: tự áp dụng fix rõ ràng)</div>
+      <div><span class="k">Job B</span>dọn worktree khi PR merge / đóng</div>
+      <div><span class="k">Job C</span>KB-backfill ticket đã Done — re-judge tri thức độc lập app (tự động)</div>
+    </div>
+  </div>
+
+  <!-- FLAGS -->
+  <div class="sec">Tham số</div>
+  <div class="flags">
+    <div class="flag"><code>--auto</code> vòng tự lái hoàn toàn (pick→fix-vs-defer→verify→PR nền→kéo lại). Mặc định TẮT = mọi cổng tương tác.</div>
+    <div class="flag"><code>--manager</code> chế độ 3: reconcile board (review-comment + worktree + KB-backfill), 1 lượt. Cần <code>&lt;KEY&gt;</code>.</div>
+    <div class="flag"><code>--team</code> multi + Agent Team (Lead+Devs+Tester+Observer); <code>--devs N</code> đặt số Dev.</div>
+    <div class="flag"><code>@N</code> chọn phase tường minh (vd <code>@3</code>) — thắng suy luận; không có thì suy từ tiêu đề spec.</div>
+    <div class="flag"><code>--model opus|sonnet|haiku</code> ghi đè ma trận model theo từng bước.</div>
+    <div class="flag"><code>--resume</code> đồng bộ lại theo dõi PR / trạng thái chờ (modifier).</div>
+    <div class="flag"><code>--recheck-env</code> buộc chạy lại env preflight, bỏ cache.</div>
+    <div class="flag"><code>--prune &lt;PROJ&gt;</code> xóa bộ nhớ phiên (<code>session/</code> ledger) khi đóng phase; KB/setup giữ.</div>
+    <div class="flag off"><code>--pr-window</code> <b>ĐÃ BỎ</b> — review stream theo từng ticket.</div>
+    <div class="flag off"><code>--every</code> <b>ĐÃ BỎ</b> — multi tự kéo lại mỗi lượt.</div>
+  </div>
+
+  <!-- GOLDEN RULES -->
+  <div class="sec">Quy tắc luôn đúng</div>
+  <div class="tags">
+    <span><b>[CLAIM]</b> claim → In-Progress + gán trước khi phân tích</span>
+    <span><b>[VERIFY]</b> review + user-test pass mới PR</span>
+    <span><b>[1COMMIT]</b> 1 commit / ticket, không squash</span>
+    <span><b>[VN]</b> hiển thị tiếng Việt · PR &amp; bộ nhớ tiếng Anh</span>
+    <span><b>[OPTIONS]</b> luôn cho bấm chọn</span>
+    <span><b>[REST]</b> Jira ghi qua REST + đọc lại xác nhận</span>
+    <span><b>[BGMEM]</b> bộ nhớ remote chạy nền</span>
+    <span><b>[SETUP]</b> ghi setup.json qua <code>setup-json.sh merge-set</code></span>
+    <span><b>[WIRE]</b> auto-wire bộ nhớ trước pull/claim</span>
+    <span><b>[BASE]</b> luôn lấy code mới nhất <code>origin/&lt;BASE&gt;</code></span>
+    <span><b>[adb]</b> test bằng adb, không mobile-mcp</span>
+  </div>
+
+  <footer>
+    Bộ nhớ dùng chung = repo GitHub riêng tư (mỗi entry 1 file markdown): KB Android + ledger trạng thái <code>project/&lt;PROJ&gt;/&lt;PHASE&gt;/session/record_bug_status.md</code>. Cách dùng chi tiết: <code>usage-by-mode.md</code>.
+  </footer>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    securityLevel: 'loose',
+    flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+# Troubleshooting
+
+Lookup table for failures during any mode. Read on demand when something errors.
+
+| Error | Action |
+|-------|--------|
+| Preflight `TIER=now STATUS=missing` (`jira-mcp` / `jira-creds`) | HARD-BLOCK before intake — `AskUserQuestion` with concrete fix options (add creds / paste manually / cancel). Setup recipes in `references/helpers/environment-setup.md` |
+| Preflight `TIER=later`/`cond` `warn`/`missing` | Do NOT block at start — batch one warning line; re-probe that dep just-in-time before its gate (`references/helpers/environment-setup.md`) |
+| `preflight-env.sh` not found / not executable | `bash <skill-dir>/assets/preflight-env.sh <root>` (no need for +x); if absent, fall back to the manual catalog in `references/helpers/environment-setup.md` |
+| `--mode` value invalid | Print usage (argument-hint line); stop. Valid values: `single`, `multi` (`pull`/`batch` accepted as `multi` aliases) |
+| `--model` value invalid | Re-ask with the model hint |
+| `--every` passed | Removed flag — warn + ignore (*"`--every` removed; multi loops automatically until the board is empty"*); do not create any schedule |
+| `mcp__jira__*` tools not live after editing config | Config written ≠ server connected — MCP loads at session start. Restart the session, then re-probe liveness. (Reload-if-needed: only prompt when config changed AND tools aren't live.) |
+| Jira token in `.claude/.env` not picked up by the MCP server | Claude Code does NOT load `.claude/.env` into MCP env. Put `JIRA_PERSONAL_TOKEN` (literal) in `~/.claude.json` `mcpServers.jira.env` or export it in the process env, then restart. `.claude/.env` is only for skill-read values (e.g. `PR_DISCORD_CHANNEL_URL`). |
+| `memory-sync.sh` push fails after retries | Entry is saved locally in the clone (`~/.claude/jira-bug-memory`); surface it, don't drop. Re-run `… push <file>` once online; check `gh`/git auth + repo access. |
+| memory clone missing on first run | Repo is FIXED (`hung-apero/jira-bug-memory`, no fallback). `bash <skill-dir>/assets/memory-sync.sh autowire` clones it → `WIRED:configured`. `REPO_ACCESS:<url>` → `gh auth login` + get permission on the repo, then retry. Never pass a different URL / create a repo / go local-only. |
+| Device verify (Phase 5) can't drive the app | Verify uses **`adb` directly** (NOT mobile-mcp). Ensure `adb devices` lists the locked serial; drive via `adb -s <serial> shell am start …` / `input tap\|swipe\|text` / `exec-out screencap` / `logcat`. No emulator/device → start one (`emulator -avd <name>`) or ask the human to attach/waive. Don't fall back to mobile-mcp. |
+| image/video attachment can't be analyzed | **human-mcp `eyes_analyze` first** (`references/helpers/media-analysis.md`) — pass the file path, get text. human-mcp exhausted-today (all Gemini keys) / unconfigured → Claude-native vision fallback (`media-preprocessing.md`); video still unreadable → extract ffmpeg keyframes, else ask the dev to summarize (steps + the moment it breaks). |
+| tmp memory grew large after a phase | `--prune <PROJ>` clears `project/<PROJ>/*/session/` (the `record_bug_status.md` bug-status ledger); the `project/<PROJ>/*/doc/` source-of-truth, `project/<PROJ>/setup.json`, and KB (`knowledgebase/`) are untouched. |
+| Cron creation fails (PR watcher only) | Surface error; the durable trigger is the state file — tell the dev to re-run `/jira-bug-analyzer --manager <KEY>` to reconcile |
+| `.jira-bug/setup.json` missing, unreadable, or corrupt | Treat as no saved setup — run the normal one-at-a-time intake, then (over)write a fresh file at the end |
+| Pull returns empty or errors on the project key | The provided project key is trusted verbatim (no `get_all_projects` validation). A wrong key just yields an empty result or a JQL error → tell the user and ask them to re-supply the exact key; never silently re-resolve to a different project |
+| Pull list dumped flat (no grouping) / everything under `### Uncategorized` | Categories are inferred from the **bug's nature** (summary/description), NOT from a Jira field — never give up because Component/Labels are empty. Read the `[tag]` prefix + wording and bucket into natural categories (UI, Ads-Issue, Subscription, Crash/Stability, Localization, Templates, …). Uncategorized only when a bug's nature is genuinely unclear |
+| Pull query errors on the `sprint` field, or is empty only because the board has no sprints (Kanban) | Drop the `sprint in openSprints()` clause, re-run once, and tell the user the pull fell back to all bugs (no active sprint on this board) |
+| Pull query returns empty (after Kanban fallback) | Report "no &lt;status set&gt; bugs in the active sprint on &lt;board&gt;" (add " assigned to you" only if scope was `Assigned to me`; omit "in the active sprint" if the sprintless fallback was used); stop |
+| A source-of-truth link is unresolved at the Phase-2 ask | **`spec` + `figma` are REQUIRED to provide — ask the dev to paste the Confluence + Figma link and BLOCK the *ask* until supplied; "we don't have it" is not accepted (dev may cancel the run).** Once supplied, the digest captures in the **background** (non-blocking) — Analyze/Fix proceed on the provided refs until it lands (Context-source rule). Only a missing REQUIRED *link* blocks — never silently force or silently skip |
+| In-Progress transition fails | Surface to user; do NOT start the fix (risk of duplicate work) |
+| Root cause is NOT fixable in app code (config/console, backend, stale build, works-as-designed, can't-repro) | Fix-9 — do NOT branch/code. Post a **plain-Vietnamese, tester/non-tech-friendly** comment on the ticket (REST, verify `HTTP 201`) explaining vấn đề / nguyên nhân / vì sao chưa sửa bằng code / cần làm tiếp; no PR, do NOT mark Resolved; ask the dev what to do with the ticket status. Multi → mark `commented`, skip, keep draining |
+| Assignee rejected on transition (workflow screen omits the field) | Run the standalone assign call (`PUT …/assignee`) after the transition (see `references/helpers/jira-rest-api.md`) |
+| Assign call returns non-204 (Jira Cloud expects `accountId`, not `name`) | Re-read `myself.accountId` and send `{"accountId":"…"}`; if still failing, surface and ask the user to assign manually — proceed with the fix (status lock already holds) |
+| Target device already locked by another process/project | Pick another **unlocked** connected serial; if none free, tell the user and wait/poll — never force-grab a locked device (`references/helpers/device-lock.md`) |
+| Device lock left stale (holder `pid` dead) | Reclaim it: `rm -rf` the lockdir then re-`mkdir` (`references/helpers/device-lock.md`) |
+| No device connected for on-device verify | `adb devices -l` empty → surface to user; do not claim "verified" without running on a device |
+| Transient error DURING self-verify (adb dropped, app crash on launch unrelated to fix, emulator hiccup, screenshot/`verify` tool errored, install flaked, stuck behind ads/onboarding, repro data-state not found) | NOT a fix failure — retry the verify (re-acquire device, relaunch from worktree, dismiss ads, try alternate content/data state, re-capture) up to **5** attempts (`--auto` verify retry budget); do not bounce to Fix-11 or skip. Retries exhausted → `blocked` → surface + ask/report |
+| Confluence/Figma ref not found | Note it; proceed with best available context |
+| Jira MCP unavailable / auth error | Try REST with token from `.mcp.json`; if that also fails, ask user to paste ticket details manually |
+| `.mcp.json` missing or token unreadable | Ask user to add the comment / worklog / transition manually; do not invent credentials |
+| No attachments | Proceed with text-only analysis |
+| Media analysis fails | Proceed with text analysis |
+| Ticket not found | Verify key format and access |
+| MCP returns "Issue updated successfully" but verification shows comment/worklog absent | Expected — the MCP toolset doesn't include comments/worklog. Use REST (`references/helpers/jira-rest-api.md`) instead |
+| REST comment POST returns non-201 | Surface response body and HTTP code; do **not** silently fall back to description-append |
+| REST worklog POST returns non-201 | Surface response body and HTTP code; ask the user to log time manually |
+| Transition rejected | List valid transitions via `GET /rest/api/2/issue/TICKET_KEY/transitions` and retry with exact `id` |
+| Comment posted under wrong author (token owner ≠ assignee) | Tell the user explicitly so they can correct the audit trail |
+| **Ticket still In Progress after a PR was opened** (not Resolved) | Fix-13 resolves at PR-creation time — if the ticket is still In Progress, the finalize didn't complete. Re-run it: confirm the PR exists (`gh pr view <PR>`), then transition → Resolved, log work (default `30m`), comment the PR link, verify per ticket. (Resolution does **not** wait for merge.) |
+| PR merged but the fix worktree is still present (cleanup never ran) | Expected when Claude was closed at merge time — `CronCreate` is not a background daemon, it only fires while a session is open. The ticket is already Resolved (done at PR creation), so just remove the worktree: `git worktree remove <worktree>`. Going forward, the minimal Init-5 cleanup removes it on the next skill start, or run `/jira-bug-analyzer --manager <KEY>` for the full reconcile — **iff the watch file exists** |
+| No `.jira-bug/pr-watch.json` was ever written for an opened PR | The arm step didn't run / its file-write failed — the watcher was never armed, so review comments won't auto-surface and the worktree won't auto-clean. The ticket is still Resolved (resolution doesn't depend on the watcher). Remove the worktree manually after merge; ensure Fix-13 writes + **verifies** the state file before claiming "armed" |
+| PR closed without merging (watcher sees `CLOSED`) | Notify; remove the fix worktree; remove the watch entry. The ticket stays Resolved (resolution happened at PR creation) — if the dev wants it reopened, that's a manual call |
+| Watcher cron missing on startup but the PR is still `OPEN` | Normal — the cron dies with the session, so `cronId` is almost always gone at startup. A `--manager` run (not the cron) is what catches the merge + review comments; re-`CronCreate` with `durable: true` only to restore live polling for the new session |
+| `gh pr view` fails / state unreadable during a poll | Keep the watch entry, retry next fire; surface to the user after repeated consecutive failures |
+| Cron fire and startup reconcile race to finalize the same PR | Atomic per-PR `mkdir` lock — whoever holds it finalizes; the other skips that pass |
+| Fix-13 finalize re-runs on an already-resolved ticket | Idempotent — `status.name == "Resolved"` → skip the transition (and skip re-logging work if a worklog already exists); no double work |
+| Watch file empty after all PRs merged/closed | `CronDelete` the watcher and delete `.jira-bug/pr-watch.json` |
+| Review-comment poll keeps re-notifying the same comment | `commentsCursor` not advanced — advance it past the newest comment already surfaced after each notify |
+| New comment authored by the token owner (your own reply) | Skip it — only surface comments from other reviewers; don't react to your own |
+| Review comment is a question / ambiguous / non-actionable | Don't guess an edit — draft a clarifying reply and ask the dev; apply nothing until clear |
+| Reply-to-thread API post fails | Surface HTTP code + body; fall back to a plain PR comment acknowledging, or ask the dev to reply manually |
+| Review comments must never be auto-applied unattended | The cron only notifies; edits happen via the interactive Address-comments flow on the dev's approval |
