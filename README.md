@@ -16,11 +16,22 @@ read-only; status is kept in the memory ledger).
 Run both inside Claude Code — no repo access needed, this marketplace is public:
 
 ```bash
-# 1. Add this marketplace
 /plugin marketplace add hung-apero/jira-bug-analyzer-plugin
-
-# 2. Install the plugin
 /plugin install jira-bug-analyzer@apero-tools
+```
+
+Both steps are required: `@apero-tools` is a *marketplace name*, and `marketplace add` is
+what maps that name to this repo. There is no one-step `/plugin install owner/repo` form.
+
+Teams can skip step 1 by committing the marketplace into a project's `.claude/settings.json`
+— teammates are then offered the plugin automatically on checkout:
+
+```json
+"extraKnownMarketplaces": {
+  "apero-tools": {
+    "source": { "source": "github", "repo": "hung-apero/jira-bug-analyzer-plugin" }
+  }
+}
 ```
 
 If you already keep a hand-copied `jira-bug-analyzer` in `~/.claude/skills/` or a project's
