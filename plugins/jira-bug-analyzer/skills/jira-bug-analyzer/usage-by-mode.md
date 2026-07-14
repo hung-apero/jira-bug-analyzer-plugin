@@ -60,7 +60,8 @@ Tài liệu nhanh cho dev: gọi skill thế nào, mỗi chế độ làm gì, d
 
 | Cờ | Tác dụng |
 |---|---|
-| `--auto` | **Vòng tự động hoàn toàn**: tự chọn ticket → fix nếu điểm tin cậy ≥80, <80 thì hoãn → verify (code-reviewer + adb) → commit+PR ở subagent nền (Discord TẮT, **mở PR nhưng KHÔNG merge**) → kéo lại đến khi board rỗng → ghi báo cáo. Mặc định TẮT = mọi cổng đều hỏi. |
+| `--auto` | **Vòng tự động hoàn toàn**: tự chọn ticket → fix nếu điểm tin cậy ≥80, <80 thì hoãn → verify (code-reviewer + adb) → commit+PR ở subagent nền (Discord TẮT trừ khi có `--discord`, **mở PR nhưng KHÔNG merge**) → kéo lại đến khi board rỗng → ghi báo cáo. Mặc định TẮT = mọi cổng đều hỏi. |
+| `--discord` | **Bật đăng review PR lên Discord** (kênh *Apero Mobile Developer / review-pr*, qua `pr-discord-review-request`, Phase-6 Bước 3) — dùng với mọi mode. Ở mode tương tác: biến câu hỏi *"Đăng Discord?"* thành tự-Yes (bỏ hỏi, luôn enqueue). Với `--auto`: đây là cách DUY NHẤT để đăng (mặc định `--auto` TẮT Discord); agent nền enqueue PR sau khi mở. Best-effort — cần `PR_DISCORD_CHANNEL_URL` (`.claude/.env`); thiếu khi `--auto` → ghi vào báo cáo + bỏ qua, không chặn vòng lặp. Không có cờ + tương tác: vẫn hỏi, mặc định Y. |
 | `@N` | Chỉ định phase tường minh (vd `@3`) — thắng mọi suy luận; không có thì suy từ tiêu đề spec. |
 | `--model opus\|sonnet\|haiku` | Ghi đè ma trận model theo từng bước. |
 | `--resume` | Đồng bộ lại bộ theo dõi PR / trạng thái đang chờ (modifier, không phải mode). |

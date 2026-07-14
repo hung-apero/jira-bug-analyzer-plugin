@@ -70,6 +70,76 @@ curl -sS -w "HTTP %{http_code}\n" -X POST \
 - Expect `HTTP 201` with a comment `id`. Anything else → surface the body + code; do **not** silently fall back to a description-append.
 - Use `[text|url]` wiki-links.
 
+## Evidence — attach it AND EMBED it in the comment (Fix-13)
+
+> **[HARD RULE — uploading evidence is only HALF the job. An attachment that is not referenced by the comment body lands in the ticket's *Attachments* panel and is invisible from the comment — the reporter/QA reads the comment and sees no proof. Every comment that claims a fix was verified MUST embed its evidence inline.]**
+
+**Order is mandatory: ATTACH first, COMMENT second.** The v2 comment endpoint converts wiki markup → ADF **at write time**, and `!file.png!` only becomes an image node if that attachment **already exists on the issue**. Comment-then-attach silently renders the literal text `!file.png!` and can never be fixed by attaching afterwards.
+
+**Use the filename Jira RETURNS, not your local one** — on a name collision Jira renames the upload (`shot.png` → `shot_1.png`), and an embed pointing at the local name renders as dead literal text.
+
+```bash
+# jira_evidence_comment <TICKET_KEY> <BODY_FILE> <EVIDENCE_FILE>...
+#   BODY_FILE = the [VN] comment prose (wiki markup). The evidence block is appended by this function.
+#   Attaches every evidence file, embeds images inline (!name.png!), links non-images ([^name.mp4]),
+#   posts the comment, then VERIFIES the embed actually rendered.
+jira_evidence_comment() {
+  local KEY="$1" BODY_FILE="$2"; shift 2
+  local EMBEDS=""
+
+  for F in "$@"; do
+    # 1) Upload. Expect HTTP 200; response is a JSON array — take the RETURNED filename.
+    local RESP; RESP=$(curl -sS -X POST \
+      -H "Authorization: Bearer $JIRA_TOKEN" -H "X-Atlassian-Token: no-check" \
+      -F "file=@$F" \
+      "$JIRA_URL/rest/api/3/issue/$KEY/attachments")
+    local NAME; NAME=$(printf '%s' "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin)[0]["filename"])' 2>/dev/null)
+    [ -z "$NAME" ] && { echo "ATTACH FAILED for $F: $RESP" >&2; continue; }
+
+    # 2) Build the embed line. Images render inline; video/other render as an attachment chip.
+    case "${NAME##*.}" in
+      png|jpg|jpeg|gif|webp) EMBEDS="${EMBEDS}\n!${NAME}!" ;;
+      *)                     EMBEDS="${EMBEDS}\n[^${NAME}]" ;;
+    esac
+  done
+
+  # 3) Post the comment WITH the evidence block appended (attachments now exist → embeds resolve).
+  local CID; CID=$(BODY_FILE="$BODY_FILE" EMBEDS="$EMBEDS" python3 - "$JIRA_URL" "$KEY" <<'PY'
+import json, os, subprocess, sys
+url, key = sys.argv[1], sys.argv[2]
+body = open(os.environ["BODY_FILE"]).read().rstrip()
+embeds = os.environ["EMBEDS"].replace("\\n", "\n")
+if embeds.strip():
+    body += "\n\n*Ảnh/Video kiểm thử:*" + embeds
+out = subprocess.run([
+    "curl", "-sS", "-X", "POST",
+    "-H", "Authorization: Bearer " + os.environ["JIRA_TOKEN"],
+    "-H", "Content-Type: application/json",
+    "--data", json.dumps({"body": body}),
+    f"{url}/rest/api/2/issue/{key}/comment",
+], capture_output=True, text=True).stdout
+print(json.loads(out)["id"])
+PY
+)
+  [ -z "$CID" ] && { echo "COMMENT FAILED for $KEY" >&2; return 1; }
+
+  # 4) VERIFY the embed rendered — a 201 alone is NOT proof the image is visible in the comment.
+  local RENDERED; RENDERED=$(curl -sS -H "Authorization: Bearer $JIRA_TOKEN" \
+    "$JIRA_URL/rest/api/2/issue/$KEY/comment/$CID?expand=renderedBody" \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("renderedBody",""))')
+  if printf '%s' "$RENDERED" | grep -qE '<img|/rest/api/[23]/attachment|data-media'; then
+    echo "OK: comment $CID embeds the evidence"
+  else
+    echo "EMBED DID NOT RENDER on comment $CID — evidence is attached but NOT visible in the comment" >&2
+    return 2
+  fi
+}
+```
+
+- Expect `HTTP 200` per upload (attachments endpoint, **not** 201) and `HTTP 201` for the comment.
+- **Return `2` (embed didn't render) is a failure, not a warning** — report it to the dev and never claim "evidence attached to the comment". Retry once with the plain `!name!` form (drop any `|width=`/`|thumbnail` params — Jira Cloud's wiki→ADF converter drops unknown params and can swallow the whole macro).
+- `.mp4`/`.webm` **cannot** be embedded inline — `[^name.mp4]` is the correct, rendering form (an attachment chip QA can click).
+
 ## Worklog (Fix-13)
 
 ```bash

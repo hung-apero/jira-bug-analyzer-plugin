@@ -8,13 +8,14 @@
 #
 # Usage:
 #   device-lock.sh acquire <serial> <owner-token> [ttl_sec]   # claim (or refresh if you already hold it)
+#   device-lock.sh exec <serial> <owner-token> -- <adb args>  # ONLY sanctioned way to touch a device
 #   device-lock.sh install <serial> <owner-token> <apk> [ttl] # acquire-then-install -r -d (keeps the lock held)
 #   device-lock.sh release <serial> <owner-token>             # release (only if you own it, or FORCE=1)
 #   device-lock.sh status  <serial>                           # FREE | LOCKED | STALE + owner
 #   device-lock.sh list                                       # every current lock
 #   device-lock.sh free-serial <owner-token> [ttl]           # print first UNLOCKED adb serial (and claim it)
 #
-# Exit: 0 ok · 3 busy/not-owner · 2 usage.   (macOS bash 3.2 compatible — no same-line local back-refs)
+# Exit: 0 ok · 3 busy/not-owner · 2 usage/bad-token.  (macOS bash 3.2 compatible — no same-line local back-refs)
 set -uo pipefail
 
 LOCKROOT="${HOME}/.claude/jira-bug-analyzer/device-locks"
@@ -22,12 +23,38 @@ mkdir -p "$LOCKROOT"
 now() { date +%s; }
 field() { sed -n "s/^$2=//p" "$1/owner" 2>/dev/null | head -1; }
 
-is_stale() {            # 0 = stale (age >= ttl or malformed)
+# The owner token MUST be the raw Claude session id — the SAME string for every call of one
+# session (every phase, every ticket, every subagent). A per-role/per-ticket variant
+# ("<sid>-analyzer-319") makes your own session BUSY against itself, which is what trains a
+# bare-adb bypass and lets a second terminal drive a device this session owns. Reject it here.
+check_token() {
+  local t="${1:-}"
+  case "$t" in
+    ""|unknown|*"<"*|*">"*|*" "*) ;;
+    *) if printf '%s' "$t" | grep -qE '^[0-9a-fA-F]{8}[0-9a-fA-F-]*$'; then return 0; fi ;;
+  esac
+  echo "BADTOKEN '$t' — owner token must be the raw Claude session id (uuid or its first 8 hex chars)," >&2
+  echo "  IDENTICAL across every phase/ticket/subagent of this session. Do NOT append a role or ticket" >&2
+  echo "  (no '-analyzer-319'): that self-collides and defeats the lock. Two terminals = two session ids." >&2
+  exit 2
+}
+
+dir_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+
+is_stale() {            # 0 = stale (age >= ttl)
   local lock="$1"
   local at; at=$(field "$lock" at)
   local ttl; ttl=$(field "$lock" ttl)
-  [ -z "$at" ] && return 0
   [ -z "$ttl" ] && ttl=1800
+  if [ -z "$at" ]; then
+    # No parseable owner record. Two cases, and calling both "stale" corrupts the lock:
+    #   (a) a peer created the dir microseconds ago and hasn't written `owner` yet → NOT stale
+    #       (reclaiming it would delete a live lock and hand the device to two sessions);
+    #   (b) a legacy/corrupt lock (e.g. the old pid= format) → stale after a short grace.
+    # Fall back to the dir's mtime with a 60s grace to tell them apart.
+    at=$(dir_mtime "$lock"); ttl=60
+    [ -z "$at" ] && return 0
+  fi
   [ $(( $(now) - at )) -ge "$ttl" ]
 }
 
@@ -49,12 +76,44 @@ acquire() {             # acquire <serial> <token> [ttl]
     write_owner "$lock" "$token" "$ttl"; echo "ACQUIRED $serial (refresh)"; return 0
   fi
   if is_stale "$lock"; then                  # holder timed out / crashed → reclaim
-    rm -rf "$lock"
-    if mkdir "$lock" 2>/dev/null; then
-      write_owner "$lock" "$token" "$ttl"; echo "ACQUIRED $serial (stale-reclaim)"; return 0
+    # Serialize the reclaim: without this, two sessions both see STALE, both rm -rf, and the
+    # second one deletes the FRESH lock the first just took — leaving both convinced they own
+    # the device. The meta-lock makes check-and-replace atomic; re-verify staleness inside it.
+    local meta="$LOCKROOT/.reclaim.lock"
+    if mkdir "$meta" 2>/dev/null; then
+      if is_stale "$lock"; then
+        rm -rf "$lock"
+        if mkdir "$lock" 2>/dev/null; then
+          write_owner "$lock" "$token" "$ttl"; rmdir "$meta"
+          echo "ACQUIRED $serial (stale-reclaim)"; return 0
+        fi
+      fi
+      rmdir "$meta"
     fi
+    # meta-lock held by a peer, or the lock got re-taken under us → treat as busy, re-read owner.
+    cur=$(field "$lock" owner)
   fi
   echo "BUSY $serial held-by=$cur since=$(field "$lock" at) project=$(field "$lock" project)"; return 3
+}
+
+# exec — the ONLY sanctioned way to touch a device. Asserts ownership, refreshes the TTL
+# (so a long drive can never look "stale" to a peer), then runs adb against the owned serial.
+# A bare `adb -s <serial> …` bypasses all of this and is the bug this gate exists to prevent.
+dexec() {               # dexec <serial> <token> -- <adb args...>
+  local serial="$1" token="$2"; shift 2
+  [ "${1:-}" = "--" ] && shift
+  local lock="$LOCKROOT/$serial.lock"
+  local cur; cur=$(field "$lock" owner)
+  if [ ! -d "$lock" ]; then
+    echo "NOLOCK $serial — acquire it first; never drive an unlocked device." >&2; return 3
+  fi
+  if [ "$cur" != "$token" ]; then
+    echo "NOTOWNER $serial held-by=$cur project=$(field "$lock" project) — another session owns this device." >&2
+    echo "  Do NOT run adb against it. Pick a free serial (free-serial) or wait for release." >&2
+    return 3
+  fi
+  write_owner "$lock" "$token" "$(field "$lock" ttl)"   # heartbeat: every adb call refreshes the claim
+  adb -s "$serial" "$@"
 }
 
 release() {             # release <serial> <token>
@@ -104,11 +163,12 @@ free_serial() {         # free-serial <token> [ttl] — claim + print the first 
 
 cmd="${1:-}"
 case "$cmd" in
-  acquire)     acquire "${2:?serial}" "${3:?token}" "${4:-1800}";;
+  acquire)     check_token "${3:?token}"; acquire "${2:?serial}" "$3" "${4:-1800}";;
+  exec)        check_token "${3:?token}"; XS="${2:?serial}"; XT="$3"; shift 3; dexec "$XS" "$XT" "$@";;
   release)     release "${2:?serial}" "${3:-}";;
   status)      status  "${2:?serial}";;
-  install)     install "${2:?serial}" "${3:?token}" "${4:?apk}" "${5:-1800}";;
-  free-serial) free_serial "${2:?token}" "${3:-1800}";;
+  install)     check_token "${3:?token}"; install "${2:?serial}" "$3" "${4:?apk}" "${5:-1800}";;
+  free-serial) check_token "${2:?token}"; free_serial "$2" "${3:-1800}";;
   list)        shopt -s nullglob; for d in "$LOCKROOT"/*.lock; do status "$(basename "${d%.lock}")"; done;;
-  *) echo "usage: device-lock.sh {acquire|release|status|install|free-serial|list} <serial> <owner-token> [apk|ttl]"; exit 2;;
+  *) echo "usage: device-lock.sh {acquire|exec|release|status|install|free-serial|list} <serial> <owner-token> [-- adb args|apk|ttl]"; exit 2;;
 esac

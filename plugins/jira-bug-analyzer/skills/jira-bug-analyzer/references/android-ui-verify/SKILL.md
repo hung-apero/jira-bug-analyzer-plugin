@@ -31,6 +31,13 @@ Verify a **UI** fix the way QA reopens it: the fixed screen must **match its Fig
 
 ## Procedure
 
+> **Device access is LOCKED — every adb call goes through the gate.** The caller passes `--serial` AND `--owner-token` (the raw Claude session id) and already holds the lock; you **drive through it** and never acquire/release it yourself:
+> ```bash
+> LOCK=<jira-bug-analyzer-skill-dir>/assets/device-lock.sh
+> bash "$LOCK" exec <serial> <owner-token> -- <adb args>   # e.g. -- exec-out screencap -p > shot.png
+> ```
+> A bare `adb -s <serial> …` bypasses the lock and lets a second terminal drive the same device — its screen then lands in YOUR evidence. `NOTOWNER` (exit 3) → stop and report `blocked`; never mint your own token, never fall back to raw adb. Standalone (no `--owner-token` given, no lock in play) → plain `adb -s` is fine.
+
 1. **Confirm target + launch from worktree** — `adb -s <serial> get-state` == `device` (else `blocked`); install + launch the `--variant` build **from the worktree dir**.
 2. **Reach the exact screen + bug state** — re-drive the repro to the affected screen; reach the data state the bug needs (e.g. long title that truncates, empty list, selected/error state). Get **past ads/onboarding/permission** first (a black screencap = secure/ad surface → press BACK, re-capture). Can't reach the state after retries → `blocked`.
 3. **Capture the device screen (SAVED evidence, medium by bug):**

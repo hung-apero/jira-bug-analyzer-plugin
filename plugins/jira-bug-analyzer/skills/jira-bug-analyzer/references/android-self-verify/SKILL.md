@@ -30,6 +30,13 @@ This verification **always runs** when invoked. You may NOT skip or shortcut it 
 
 ## Procedure
 
+> **Device access is LOCKED — every adb call goes through the gate.** The caller passes `--serial` AND `--owner-token` (the raw Claude session id) and already holds the lock; you **drive through it** and never acquire/release it yourself:
+> ```bash
+> LOCK=<jira-bug-analyzer-skill-dir>/assets/device-lock.sh
+> bash "$LOCK" exec <serial> <owner-token> -- <adb args>   # e.g. -- exec-out screencap -p > shot.png
+> ```
+> A bare `adb -s <serial> …` bypasses the lock and lets a second terminal drive the same device — its screen then lands in YOUR evidence. `NOTOWNER` (exit 3) → stop and report `blocked`; never mint your own token, never fall back to raw adb. Standalone (no `--owner-token` given, no lock in play) → plain `adb -s` is fine.
+
 1. **Confirm the target** — verify the passed `--serial` is connected (`adb -s <serial> get-state` == `device`). Not connected → `blocked` (caller's lock points at a gone device).
 2. **Launch from the worktree** — install + launch the `--variant` build **from the worktree dir** on `--serial`. App already running from the caller's run step → bring it foreground; otherwise launch it.
 3. **Drive thoroughly — don't glance at one screen:**

@@ -5,7 +5,9 @@
 ## Entry contract
 Arrives from Phase 5 (Gate 3) with: the diff **reviewed on the GitHub webview (dev said no-change)** + **user-verified**, in its worktree, with only a throwaway `wip: <TICKET> review` render commit on the branch. Also carried in: the **Phase-3 analysis** (root cause, scorecard, plan, files) and the **Phase-5 verification** (steps, expected, evidence) — both go into the PR description. `<BASE>` = the resolved `setup.json.baseBranch` (e.g. `develop` — never a hardcoded `main`; Base branch block in `references/run-blocks.md`).
 
-> **`[AUTO]` (`--auto`) — this WHOLE phase runs as a BACKGROUND agent (`run_in_background: true`); every prompt auto-resolves to its default, no asks** (SKILL.md `[AUTO]` rule): Step 1 `Commit now` · Step 2 `Create PR` + worklog `30m` · **Step 3 Discord OFF** (never post on an auto batch). **Step 2.3 inline cron arming is SKIPPED, but the watch file `.jira-bug/pr-watch.json` IS still written** so `--manager` can reconcile the PR later — PR review-comment handling + worktree cleanup + KB-backfill are owned by `--manager` (`references/phase-manager-mode.md`), run after the batch. Auto opens the PR but **never merges**. The main loop dispatches this background agent and **immediately returns to Phase 1 (re-pull)** — it never awaits the commit/PR/Jira round-trips. The background agent appends this PR to the run's `.jira-bug/auto-report-<date>.md` (✅ PRs opened) and surfaces any failure there (never blocks the loop).
+> **`[AUTO]` (`--auto`) — this WHOLE phase runs as a BACKGROUND agent (`run_in_background: true`); every prompt auto-resolves to its default, no asks** (SKILL.md `[AUTO]` rule): Step 1 `Commit now` · Step 2 `Create PR` + worklog `30m` · **Step 3 Discord OFF unless `--discord` was passed** — a plain auto batch never posts; with `--discord` the background agent enqueues the opened PR to Discord (best-effort: missing `PR_DISCORD_CHANNEL_URL` is logged to the run report + skipped, never blocks the loop). **Step 2.3 inline cron arming is SKIPPED, but the watch file `.jira-bug/pr-watch.json` IS still written** so `--manager` can reconcile the PR later — PR review-comment handling + worktree cleanup + KB-backfill are owned by `--manager` (`references/phase-manager-mode.md`), run after the batch. Auto opens the PR but **never merges**. The main loop dispatches this background agent and **immediately returns to Phase 1 (re-pull)** — it never awaits the commit/PR/Jira round-trips. The background agent appends this PR to the run's `.jira-bug/auto-report-<date>.md` (✅ PRs opened) and surfaces any failure there (never blocks the loop).
+
+> **`[SHEET]` (google-sheet board):** `[1COMMIT]` + `gh pr create` are UNCHANGED (per-bug PR heading = `<PROJECT>-SHEET-<N°>`). But there is **no Jira** — replace the "Attach PR + finalize Jira" subagent (Step 2 item 2) with a single ledger update: upsert `record_bug_status.md` → `status: done`, `pr: <link>` (local + shared, `[BGMEM]`). **No comment / worklog / transition, and the sheet is never written.** Defer / non-code reasons go to the ledger + chat `[VN]`, not a Jira comment. Full spec: `references/google-sheet-board.md` → "Commit & PR". Steps 1 + 3 (Discord) + the PR body are unchanged.
 
 ## Step 1 — Commit `[OPTIONS]` (`Commit now` / `Not yet`)
 On **`Commit now`** → amend the `wip:` render commit into the real message per `[1COMMIT]`:
@@ -17,13 +19,11 @@ git -C <wt> push --force-with-lease
 - Multi/team: the **batch branch** already holds **one commit per ticket** — `[1COMMIT]`, never `--squash`; each ticket's commit is its own `fix(scope): … (TICKET)` (merged in at its Phase-5 Gate-1 `OK`).
 - **`Not yet`** → stop; the fix stays in the worktree, ticket stays In Progress.
 
-> **`[SHEET]` (google-sheet board):** `[1COMMIT]` + `gh pr create` are UNCHANGED (per-bug PR heading = `<PROJECT>-SHEET-<N°>`). But there is **no Jira** — replace the "Attach PR + finalize Jira" subagent (Step 2 item 2) with a single ledger update: upsert `record_bug_status.md` → `status: done`, `pr: <link>` (local + shared, `[BGMEM]`). **No comment / worklog / transition, and the sheet is never written.** Defer / non-code reasons go to the ledger + chat `[VN]`, not a Jira comment. Full spec: `references/google-sheet-board.md` → "Commit & PR". Steps 1 + 3 (Discord) + the PR body are unchanged.
-
 ## Step 2 — Create PR & update Jira (the old Fix-13)
 Ask confirmation first `[OPTIONS]` (`Create PR` / `Skip PR`); **`Skip PR`** → ticket stays In Progress, stop. On **`Create PR`**, finalize (MCP for reads / field updates it supports — description, summary, labels, fixVersions; `[REST]` for comments/worklog/transitions). **Ticket reaches Resolved at PR-creation — not at merge.**
 1. **Open or update the PR** with the full description. **Multi: if the batch PR is already open** (an earlier ticket opened it), do NOT create a second PR — the new commit on the batch branch already updates it; just append this ticket's section to the PR body (`gh pr edit <pr> --body-file <body>`). **If no batch PR exists yet** (first verified ticket), open it: `gh pr create --base <BASE> --title "fix(scope): … (TICKET)" --body-file <body>` from the batch branch. Build `<body>` from the **PR-description template below**, carrying every Phase-3 + Phase-5 fact **per ticket**; the batch branch holds one commit per ticket — `[1COMMIT]`, never `--squash`; the body has one section per ticket.
 2. **Attach PR + finalize Jira — in a BACKGROUND subagent** (`run_in_background: true`, haiku) so the main session isn't blocked on Jira round-trips. The subagent does, per ticket the PR carries, all via `[REST]` and re-reads to confirm:
-   - **Comment the PR link** on the ticket (expect `HTTP 201`). **Under `--auto`: also attach the saved self-verify evidence** from `.jira-bug/evidence/<TICKET>/` (image or video per bug type) to the ticket via the Jira attachments REST endpoint (`POST /rest/api/3/issue/<KEY>/attachments`, header `X-Atlassian-Token: no-check`), so the proof lives on the ticket as well as the PR body — expect `HTTP 200`.
+   - **Post the fix comment WITH its evidence EMBEDDED — one comment, never a bare attachment.** `[VN]` prose + the PR link + the saved verify evidence from `.jira-bug/evidence/<TICKET>/`, in **this order — attach first, comment second** (see the Resolve-comment block below). **Uploading the evidence is only half the job**: an attachment that the comment body never references sits in the ticket's *Attachments* panel, invisible from the comment — the reporter opens the comment and sees a fix claim with no proof. **A resolve comment without an embedded evidence line is a BUG.** Applies to **every** run that has evidence — not just `--auto` (interactive `android-ui-verify` saves evidence too).
    - **Transition → Resolved** (discover the exact "Resolved"/"Resolve Issue" transition id — it differs by current status; from In Progress it is often a different id than from Request). Multi: resolve **every** ticket the PR carries.
    - **`[AUTO]` — stamp the auto-fix quality flag (ONLY under `--auto`).** So auto-fixes can be evaluated later, mark every ticket this `--auto` run resolves:
      - **Add the Jira label `auto-fixed`** (MCP field update — labels are MCP-writable; merge, don't clobber existing labels). This is the queryable eval anchor: `JQL: labels = auto-fixed` lists every auto-fixed ticket.
@@ -32,6 +32,30 @@ Ask confirmation first `[OPTIONS]` (`Create PR` / `Skip PR`); **`Skip PR`** → 
    - **Log work** — time spent asked in the main session first `[OPTIONS]` (`30m` default / `1h` / `2h` / free-text), passed to the subagent (expect `HTTP 201`).
    - **Verify all landed** — re-read: `worklog.total` increased, PR-link comment present, `status.name == "Resolved"`. Missing → report back so the main session tells the user (never claim success from a single `2xx`).
 3. **Arm the review-comment watcher** — write `.jira-bug/pr-watch.json` (the durable trigger that `--manager` reconciles). **Under `--auto`: write the watch file but SKIP the cron + the ask** (manager mode is run after the batch). When NOT `--auto`: `[OPTIONS]` (`Watch` default / `Don't watch`) — write + verify `.jira-bug/pr-watch.json`, then a `durable: true` 1-min `CronCreate` firing `/jira-bug-analyzer --manager <KEY>` (best-effort in-session polling); confirm via `CronList`. File write fails → arming failed, tell the dev to re-run `/jira-bug-analyzer --manager <KEY>`. (PR watcher block / `references/helpers/pr-merge-watcher.md`; the full reconcile + KB-backfill lives in `references/phase-manager-mode.md`.)
+
+### Resolve-comment template (`[VN]`, evidence EMBEDDED — the comment a reporter/QA actually reads)
+Written for a non-technical reader (`[VN]`: có dấu, no code/stack/paths — those go to the dev in chat). Wiki markup, posted via `[REST]` v2. **The `Ảnh/Video kiểm thử` block is NOT optional whenever `.jira-bug/evidence/<TICKET>/` has files** — it is what proves the fix, and it is exactly the part that has been silently dropped in the past.
+```
+🔧 Đã sửa — [TICKET_KEY]
+
+• Vấn đề: <mô tả ngắn, đúng thứ reporter thấy>
+• Nguyên nhân: <giải thích đơn giản, không thuật ngữ>
+• Đã sửa: <thay đổi gì, theo ngôn ngữ người dùng>
+• Đã kiểm thử: <thiết bị + bước kiểm thử + kết quả quan sát được>
+• Lưu ý cho QA: <điều QA cần biết / phần cố ý giữ nguyên>  ← bỏ dòng này nếu không có
+• Pull request: [PR #N|<pr_url>] (đang chờ review, chưa merge)
+
+*Ảnh/Video kiểm thử:*
+!<evidence-1.png>!
+[^<evidence-2.mp4>]
+```
+Do **not** hand-roll the upload+embed — call the helper, which attaches first, embeds by media type, posts, and **verifies the embed actually rendered** (`references/helpers/jira-rest-api.md` → *Evidence — attach it AND EMBED it in the comment*):
+```bash
+jira_evidence_comment "<TICKET>" /tmp/<TICKET>-comment.txt .jira-bug/evidence/<TICKET>/*
+```
+- Images (`.png/.jpg/.webp`) embed inline as `!name!`; video (`.mp4`) renders as an attachment chip `[^name]` — video cannot be inlined in Jira.
+- **Always use the filename Jira RETURNS from the upload**, not the local one (Jira renames collisions `shot.png` → `shot_1.png`; an embed on the stale name renders as dead literal text).
+- The helper returns non-zero if the re-read `renderedBody` carries no `<img>`/attachment node → **the evidence did not land in the comment**: surface it to the dev and never report the ticket as evidenced.
 
 ### PR-description template (one section per ticket — carries Phase 3 + Phase 5)
 PR title/description stay **English** (grep/tooling consistency — Golden Rule `[VN]`). One `## <TICKET-KEY> — <title>` block per ticket:
@@ -58,7 +82,12 @@ PR title/description stay **English** (grep/tooling consistency — Golden Rule 
 <!-- Confidence scorecard sum: <N>/100 -->
 ```
 ## Step 3 — Offer Discord review-request
-**Offer Discord review-request** (opt-in, default Y, independent of the watcher-arming in Step 2 — a failure here must NOT block watcher arming): ask *"Post review request to Discord via Cowork? [Y/n]"*. On Y, enqueue the PR via the `pr-discord-review-request` skill (Skill tool — auto-resolves any repo), or run its writer directly from user scope:
+**Offer Discord review-request** (opt-in, independent of the watcher-arming in Step 2 — a failure here must NOT block watcher arming). **Gate depends on flags:**
+- **`--discord` passed** → auto-yes, **skip the ask**, always enqueue (this is the flag's whole point). Under `--auto` this is the ONLY path that reaches Step 3's enqueue — without `--discord`, `--auto` skips it entirely (Discord OFF).
+- **No flag, interactive** → ask *"Post review request to Discord via Cowork? [Y/n]"* (default **Y**).
+- **No flag, `--auto`** → skipped (Discord OFF, per the `[AUTO]` note above).
+
+On enqueue, post the PR via the `pr-discord-review-request` skill (Skill tool — auto-resolves any repo), or run its writer directly from user scope:
    ```bash
    ENQ="$(ls .claude/skills/pr-discord-review-request/scripts/enqueue-pr-review.cjs 2>/dev/null \
      || echo "$HOME/.claude/skills/pr-discord-review-request/scripts/enqueue-pr-review.cjs")"

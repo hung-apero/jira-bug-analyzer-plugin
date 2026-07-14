@@ -118,7 +118,7 @@ flowchart LR
   A["pick<br/>tự chọn ticket"] --> B{"điểm ≥80?"}
   B -->|"có"| C["verify<br/>code-reviewer + adb<br/>(2× re-fix)"]
   B -->|"không"| D["hoãn + báo cáo"]:::stop
-  C --> E["ship<br/>commit+PR nền · Discord TẮT<br/>PR mở KHÔNG merge"]
+  C --> E["ship<br/>commit+PR nền · Discord TẮT (trừ --discord)<br/>PR mở KHÔNG merge"]
   E --> F{"board rỗng?"}
   F -->|"chưa"| A
   F -->|"rồi"| G(["auto-report → DỪNG"]):::start
@@ -144,6 +144,7 @@ flowchart LR
     <div class="flag"><code>--team</code> multi + Agent Team (Lead+Devs+Tester+Observer); <code>--devs N</code> đặt số Dev.</div>
     <div class="flag"><code>@N</code> chọn phase tường minh (vd <code>@3</code>) — thắng suy luận; không có thì suy từ tiêu đề spec.</div>
     <div class="flag"><code>--model opus|sonnet|haiku</code> ghi đè ma trận model theo từng bước.</div>
+    <div class="flag"><code>--discord</code> bật đăng review PR lên Discord (mọi mode; với <code>--auto</code> là cách duy nhất — mặc định TẮT). Cần <code>PR_DISCORD_CHANNEL_URL</code>.</div>
     <div class="flag"><code>--resume</code> đồng bộ lại theo dõi PR / trạng thái chờ (modifier).</div>
     <div class="flag"><code>--recheck-env</code> buộc chạy lại env preflight, bỏ cache.</div>
     <div class="flag"><code>--prune &lt;PROJ&gt;</code> xóa bộ nhớ phiên (<code>session/</code> ledger) khi đóng phase; KB/setup giữ.</div>
