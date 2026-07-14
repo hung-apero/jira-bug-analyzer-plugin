@@ -13,13 +13,20 @@ read-only; status is kept in the memory ledger).
 
 ## Install
 
+Run both inside Claude Code — no repo access needed, this marketplace is public:
+
 ```bash
-# 1. Add this marketplace (private repo — requires gh access to hung-apero/jira-bug-analyzer-plugin)
+# 1. Add this marketplace
 /plugin marketplace add hung-apero/jira-bug-analyzer-plugin
 
 # 2. Install the plugin
 /plugin install jira-bug-analyzer@apero-tools
 ```
+
+If you already keep a hand-copied `jira-bug-analyzer` in `~/.claude/skills/` or a project's
+`.claude/skills/`, **delete it** — it shadows the plugin and silently drifts out of date.
+
+Update later with `/plugin marketplace update apero-tools`.
 
 Then invoke the skill:
 
@@ -34,8 +41,14 @@ Then invoke the skill:
 
 The skill auto-installs its MCP servers on first run (jira, confluence, figma, human-mcp)
 and prompts for the per-dev `JIRA_PERSONAL_TOKEN`. It also expects, at their gates:
-`gh` (authenticated with access to the memory repo `hung-apero/jira-bug-memory`), `adb`
-(for on-device verify), and a Gradle Android project for the fix/build phases.
+`gh` (authenticated), `adb` (for on-device verify), and a Gradle Android project for the
+fix/build phases.
+
+**Apero devs only:** the shared memory/KB lives in the private repo
+`hung-apero/jira-bug-memory`. Your `gh` account needs **write** access to it, or the
+memory phase (cross-dev bug dedup + the Android knowledge base) will fail. Ask
+@hung-apero for access. The plugin is public, but this repo is not — outside Apero, the
+memory phase will not work.
 
 ## Repo layout (marketplace + plugin monorepo)
 
