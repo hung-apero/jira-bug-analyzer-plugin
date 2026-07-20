@@ -23,7 +23,7 @@ Tài liệu nhanh cho dev: gọi skill thế nào, mỗi chế độ làm gì, d
 ```
 - Dùng khi: đã biết đúng ticket cần sửa.
 - Luồng: Tiếp nhận → Nguồn dữ liệu chuẩn (nền) → **Phân tích** (claim → nguyên nhân gốc → kế hoạch → **chờ duyệt**) → **Sửa + build** → **Kiểm thử** (review diff + cài APK + user kiểm thử) → **Commit & PR**.
-- Bạn sẽ được hỏi: link spec/Figma (lần đầu), duyệt kế hoạch, xác nhận kiểm thử OK.
+- Bạn sẽ được hỏi: duyệt kế hoạch, xác nhận kiểm thử OK. **Link spec/Figma KHÔNG còn phải dán tay** — skill tự dò từ chính ticket (remote-link / link trong mô tả) và từ trong spec; chỉ hỏi khi dò không ra (hoặc cho chọn 1 chạm khi có nhiều ứng viên). Dò nhầm trang → chạy lại với `--rediscover`.
 
 ## 2) Multi — kéo board, sửa nhiều ticket
 

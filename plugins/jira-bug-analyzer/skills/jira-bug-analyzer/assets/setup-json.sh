@@ -14,6 +14,12 @@
 # merge-set values: parsed as JSON when valid (objects/arrays/numbers/bool), else taken as a string.
 #   setup-json.sh merge-set s.json baseBranch=develop savedBy=hungnd
 #   setup-json.sh merge-set s.json 'pullQuery={"jql":"...","sprintMode":"sprinted"}'
+#
+# Dotted keys address nested objects, creating intermediate levels as needed. A dotted set merges
+# into its parent instead of replacing it, so sibling entries survive — this is what lets each phase
+# own its own source-of-truth entry without clobbering the others:
+#   setup-json.sh merge-set s.json 'sotByPhase.phase3={"spec":"...","figma":"..."}'
+#   setup-json.sh get       s.json  sotByPhase.phase3.spec
 
 set -euo pipefail
 
@@ -38,7 +44,12 @@ except Exception:
         d = json.loads(re.sub(r',(\s*[}\]])', r'\1', text))
     except Exception:
         print(""); sys.exit()
-v = d.get(key, "") if isinstance(d, dict) else ""
+v = d
+for part in key.split("."):
+    if not isinstance(v, dict):
+        v = ""
+        break
+    v = v.get(part, "")
 if v in (None, False):
     v = ""
 print(v if isinstance(v, str) else json.dumps(v))
@@ -68,9 +79,17 @@ for p in pairs:
         continue
     k, v = p.split("=", 1)
     try:
-        d[k] = json.loads(v)          # objects/arrays/numbers/bool
+        val = json.loads(v)            # objects/arrays/numbers/bool
     except Exception:
-        d[k] = v                       # plain string
+        val = v                        # plain string
+    parts = k.split(".")
+    node = d
+    # walk to the leaf's parent, creating (or replacing a non-dict) as we go
+    for part in parts[:-1]:
+        if not isinstance(node.get(part), dict):
+            node[part] = {}
+        node = node[part]
+    node[parts[-1]] = val
 json.dump(d, open(path, "w"), indent=2)
 open(path, "a").write("\n")
 PY

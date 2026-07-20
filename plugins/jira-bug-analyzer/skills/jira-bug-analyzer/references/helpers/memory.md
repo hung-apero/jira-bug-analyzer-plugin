@@ -32,7 +32,7 @@ setup/manifest.json                                    # global MCP manifest (NO
 | action | writes | when |
 |---|---|---|
 | `project-setup` | `project/<PROJ>/setup.json` | SKILL.md Init-4 — on first config / `Change` / args override; project-level setup so any teammate reuses board/status/spec/figma/**baseBranch** without re-asking. **Resolving a previously-absent `baseBranch` (the `BASEBRANCH=none` ASK gate) IS a project-setup change → push it here the moment the dev picks, same as first config.** Don't treat baseBranch as local-only. **ALWAYS write this file with `bash <skill-dir>/assets/setup-json.sh merge-set <file> key=val …` (canonical, trailing-comma-safe, merges into existing fields) — NEVER hand-write/`echo` the JSON. A hand-written trailing comma reads back empty under strict parse and silently disables config reuse + local-mirror hydration.** |
-| `source-of-truth` | `project/<PROJ>/<PHASE>/doc/spec.md` · `figma.md` · one `<slug>.md` per external source + `metadata.json` (status manifest) | Source-of-truth gate (SKILL.md — before analyzing). **Captures the FULL phase content, independent of the picked tickets.** `spec`+`figma` REQUIRED (no waive): present digest fresh → reuse; stale → re-capture; absent → ask the dev to paste the link, BLOCK until supplied. **External sources: each gets its OWN `<slug>.md` file (named for the source). Read directly → readable → write content into `<slug>.md` (`status: present`); unreadable → write a `<slug>.md` with a `pending` placeholder (link URL + why-unreadable) + mark that source `pending` in `metadata.json`; do NOT block, proceed. NO `requests/` folder, NO co-worker hand-off.** Each capture run with a `pending` external source re-pulls + **re-attempts the direct read**; now readable → fill its `<slug>.md`. Always rewrite `metadata.json` when any source changed. Push only the file(s) touched this run. Returns `ready`/`built`/`blocked` (blocked only on a missing required source; a pending external source is `ready`, not blocked). |
+| `source-of-truth` | `project/<PROJ>/<PHASE>/doc/spec.md` · `figma.md` · one `<slug>.md` per external source + `metadata.json` (status manifest) · **`setup.json` `sotByPhase.<PHASE>`** (the resolved links + `detectedFrom`, dotted deep-merge) | Source-of-truth gate (SKILL.md — before analyzing). **Captures the FULL phase content, independent of the picked tickets.** `spec`+`figma` REQUIRED (no waive): present digest fresh → reuse; stale → re-capture; absent → **auto-discover per `references/phase2-source-of-truth.md` §2.0** (STRONG → adopt silently; FUZZY → one-tap pick-list; only a NONE result falls back to asking the dev to paste the link, BLOCK until supplied). **External sources: each gets its OWN `<slug>.md` file (named for the source). Read directly → readable → write content into `<slug>.md` (`status: present`); unreadable → write a `<slug>.md` with a `pending` placeholder (link URL + why-unreadable) + mark that source `pending` in `metadata.json`; do NOT block, proceed. NO `requests/` folder, NO co-worker hand-off.** Each capture run with a `pending` external source re-pulls + **re-attempts the direct read**; now readable → fill its `<slug>.md`. Always rewrite `metadata.json` when any source changed. Push only the file(s) touched this run. Returns `ready`/`built`/`blocked` (blocked only on a missing required source; a pending external source is `ready`, not blocked). |
 | `status` | **ONE file:** upsert the bug's row in `project/<PROJ>/<PHASE>/session/record_bug_status.md` (the consolidated ledger — `root_cause_slug` + the concise root cause in `summary` + touched `file:line`s in `files`). | **the moment a bug is analyzed** (write the row with `root_cause_slug` + summary + files), then each later transition: `analyzing` (claim) → `analyzed` (plan ready) → `fixing` → `pr-created` → `done` (also `commented`/`blocked`). One row per ticket, keyed by ticket — upsert, don't append duplicates. **There is no per-ticket file — the ledger row is the only memory record.** |
 | `kb-upsert` | `knowledgebase/<category>/<slug>.md` | on `done` when analyzer flagged `app_agnostic=true` |
 | `kb-feedback` | bump `confidence` in `knowledgebase/<category>/<slug>.md` | a `kb_hit` fix that verified `pass` |
@@ -81,15 +81,38 @@ last_seen: 2026-06-27
   "board": "AIP806A",
   "statusSet": ["Request", "Reopened"],
   "assigneeScope": "Any assignee",
-  "spec": "<confluence url(s)>",
-  "figma": "<figma url(s)>",
-  "otherRefs": "<drawio / code paths / notes>",
+  "spec": "<LEGACY flat confluence url — reads as phase1 ONLY; see the phase-keyed rule below>",
+  "figma": "<LEGACY flat figma url — reads as phase1 ONLY>",
+  "otherRefs": "<LEGACY flat drawio / code paths / notes>",
+  "sotByPhase": {
+    "phase3": {
+      "spec": "<confluence url>",
+      "figma": "<figma url>",
+      "otherRefs": "<drawio / sheets / code paths>",
+      "detectedFrom": "remotelink:AIP806A-179",
+      "confirmedBy": "hungnd",
+      "savedAt": "2026-07-14"
+    }
+  },
   "pullQuery": { "jql": "project = \"AIP806A\" AND ...", "sprintMode": "sprinted" },
   "baseBranch": "develop",
   "savedAt": "2026-06-27",
   "savedBy": "dungnt2"
 }
 ```
+
+**`sotByPhase` — the source-of-truth links are PHASE-keyed, not project-keyed.** Different phases have
+different spec/figma pages, so one flat `spec`/`figma` per project is wrong: a `@3` run would silently
+inherit `@1`'s spec and every fix in the phase would be anchored to the wrong ground truth. Rules:
+- **Read** `sotByPhase[<PHASE>]` — that is the only entry that may be **auto-adopted** for that phase.
+- **Legacy flat `spec`/`figma`/`otherRefs`** (written before this field existed) resolve as a **`phase1`
+  entry ONLY**. For any other phase they are demoted to a mere *candidate* — offered in the Phase-2
+  pick-list, **never auto-adopted**. This is what makes cross-phase inheritance impossible.
+- **Write** with the dotted deep-merge so sibling phases survive — `assets/setup-json.sh` handles this:
+  `setup-json.sh merge-set <file> 'sotByPhase.phase3={"spec":"…","figma":"…","detectedFrom":"…"}'`.
+  A plain `sotByPhase={…}` set would REPLACE the whole object and destroy the other phases' entries.
+- `detectedFrom` records which discovery rung produced the link (`remotelink:<KEY>` / `ticket-body:<KEY>` /
+  `cql` / `sibling` / `manual`) — it is the audit trail for "why is the agent using this spec?".
 
 **`project/<PROJ>/<PHASE>/doc/metadata.json`** — the **status manifest for all doc sources this phase** (one read tells the gate what's captured / stale / pending):
 ```json
@@ -128,7 +151,7 @@ Body per source:
 ### Rules
 - **One file per write** + `memory-sync.sh push <file> "<msg>"` (pull-rebase-retry) ⇒ concurrent devs never conflict. `spec.md` / `figma.md` / each external `<slug>.md` are **independent entries** — push only the one(s) captured or updated this run, each as its own commit; also push `metadata.json` whenever any source's status/version changed.
 - **Source-of-truth = background capture, NOT a blocking gate. `spec` + `figma` are MANDATORY to *provide* (NOT waivable).** `pull 0` first. The capture runs in the background — only the *ask* for the mandatory links blocks; the digest never blocks Analyze/Fix (they fall back to the dev's provided refs via the Context-source rule until the digest lands).
-  - **`spec` + `figma` — REQUIRED to provide, no waive.** Resolved iff a link was supplied (digested into the `.md` as `status: present`, or in flight as `capturing`). "we don't have it" is NOT accepted. No link supplied → ask the dev to **paste the Confluence + Figma link** and keep `blocked` until supplied (dev may cancel the run, but may not opt out).
+  - **`spec` + `figma` — REQUIRED to end up with, no waive.** Resolved iff a link was **auto-discovered (Phase-2 §2.0)** or supplied (digested into the `.md` as `status: present`, or in flight as `capturing`). "we don't have it" is NOT accepted. Only when §2.0 finds **nothing** → ask the dev to **paste the Confluence + Figma link** and keep `blocked` until supplied (dev may cancel the run, but may not opt out).
   - supplied → capture the digest, write `status: present`.
   Return `blocked` only while a **required** source (`spec`/`figma`) is still unsupplied — analysis must not start. Capture/build only the missing or stale sources.
 - **Staleness check (every run that hits the gate):** read `metadata.json` once; for each `present` source compare its live version against the manifest `version` — Confluence `version.number`, Figma file `lastModified`/`version`; external sources have no auto-version (trust `capturedAt` unless the dev flags it). Live newer → re-capture that one source + bump its `version`/`capturedAt` (in the file frontmatter AND `metadata.json`). All within bounds → reuse as-is (no rebuild, no push).
