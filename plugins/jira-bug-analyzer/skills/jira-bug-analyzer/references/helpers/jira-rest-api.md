@@ -70,7 +70,11 @@ curl -sS -w "HTTP %{http_code}\n" -X POST \
 - Expect `HTTP 201` with a comment `id`. Anything else → surface the body + code; do **not** silently fall back to a description-append.
 - Use `[text|url]` wiki-links.
 
-## Evidence — attach it AND EMBED it in the comment (Fix-13)
+## Evidence — attach it AND EMBED it in the comment (used TWICE per ticket)
+
+> **Called at two points, not one** (`[EVIDENCE]`): **(1) repro confirmed** — Phase 3, the main session posts the "đã tái hiện được" comment with the `repro-*` media; **(2) resolve** — Phase 6, the comment carries **both** `repro-*` (before) and `verify-*` (after) plus the PR link. A third call covers the **unreproducible defer** (the ask-reporter comment attaches the `repro-attempt-*` cases that did NOT trigger the bug).
+>
+> **Filename convention makes the embed self-explanatory — no per-file captions needed.** Save evidence into `.jira-bug/evidence/<TICKET>/` as **`repro-<what>.png|mp4`** (before / the bug happening), **`repro-attempt-<case>.png|mp4`** (a case driven that did NOT reproduce), **`verify-<what>.png|mp4`** (after the fix). Jira shows the filename on every inline image and attachment chip, so a reader can tell before from after at a glance.
 
 > **[HARD RULE — uploading evidence is only HALF the job. An attachment that is not referenced by the comment body lands in the ticket's *Attachments* panel and is invisible from the comment — the reporter/QA reads the comment and sees no proof. Every comment that claims a fix was verified MUST embed its evidence inline.]**
 
@@ -81,6 +85,10 @@ curl -sS -w "HTTP %{http_code}\n" -X POST \
 ```bash
 # jira_evidence_comment <TICKET_KEY> <BODY_FILE> <EVIDENCE_FILE>...
 #   BODY_FILE = the [VN] comment prose (wiki markup). The evidence block is appended by this function.
+#   EVIDENCE_CAPTION (env, optional) = heading above the embeds. Default "Ảnh/Video kiểm thử".
+#     repro comment      → EVIDENCE_CAPTION="Ảnh/Video tái hiện lỗi"
+#     unreproducible ask → EVIDENCE_CAPTION="Các trường hợp đã thử (không ra lỗi)"
+#     resolve comment    → default (carries both repro-* before and verify-* after)
 #   Attaches every evidence file, embeds images inline (!name.png!), links non-images ([^name.mp4]),
 #   posts the comment, then VERIFIES the embed actually rendered.
 jira_evidence_comment() {
@@ -104,13 +112,14 @@ jira_evidence_comment() {
   done
 
   # 3) Post the comment WITH the evidence block appended (attachments now exist → embeds resolve).
-  local CID; CID=$(BODY_FILE="$BODY_FILE" EMBEDS="$EMBEDS" python3 - "$JIRA_URL" "$KEY" <<'PY'
+  local CID; CID=$(BODY_FILE="$BODY_FILE" EMBEDS="$EMBEDS" \
+    EVIDENCE_CAPTION="${EVIDENCE_CAPTION:-Ảnh/Video kiểm thử}" python3 - "$JIRA_URL" "$KEY" <<'PY'
 import json, os, subprocess, sys
 url, key = sys.argv[1], sys.argv[2]
 body = open(os.environ["BODY_FILE"]).read().rstrip()
 embeds = os.environ["EMBEDS"].replace("\\n", "\n")
 if embeds.strip():
-    body += "\n\n*Ảnh/Video kiểm thử:*" + embeds
+    body += "\n\n*" + os.environ["EVIDENCE_CAPTION"] + ":*" + embeds
 out = subprocess.run([
     "curl", "-sS", "-X", "POST",
     "-H", "Authorization: Bearer " + os.environ["JIRA_TOKEN"],

@@ -10,12 +10,13 @@
 - **Không reproduce được on-device** (`bug-analysis-rules.md` `[REPRO]` A7a/A10) → **defer** (`unreproducible` hoặc `no-device`); **dưới `--auto` device là BẮT BUỘC, không có static fallback** — không có máy / không lấy được device lock trong thời gian chờ / chạy hết ladder vẫn không repro → defer + report. `--auto` KHÔNG BAO GIỜ auto-fix một bug chưa reproduce được trên máy.
 - **Không phải bug code thật** (config/console · backend · stale build/env/device · works-as-designed · duplicate — A1/A2) → route Fix-9 (non-code comment) / defer; không tự chế fix.
 - **Score `sum < 80`** → **defer + report** (mark `deferred`, không fix), ghi lý do `score <80 (sum=N)`.
-- **Còn câu hỏi chưa rõ** (SOT/spec/figma không trả lời được) → **defer** (`clarify-gap`); auto KHÔNG tự đoán.
+- **Còn câu hỏi chưa rõ** (SOT có, nhưng không trả lời được câu hỏi của ticket) → **defer** (`clarify-gap`); auto KHÔNG tự đoán.
+- **KHÔNG có source-of-truth cho cả phase** (ladder §2.0 (`references/helpers/source-of-truth-discovery.md`) trả NONE, hoặc FUZZY không qua ngưỡng auto-adopt) → **defer** (**`no-sot`**) — lý do RIÊNG, đừng gộp vào `clarify-gap`. Khác nhau ở chỗ: `clarify-gap` là *thiếu 1 câu trả lời cho 1 ticket*, `no-sot` là *cả phase không có ground truth* → nó tác động MỌI ticket của phase, và cách gỡ là ở cấp phase chứ không phải cấp ticket. **Report BẮT BUỘC kèm rung trace + cách gỡ:** đã đi qua rung nào, mỗi rung trả gì, rồi nêu đích danh remedy. **Trace PHẢI bao gồm cả 3 rung project-level (L2d sweep toàn project · L2e fixVersion+Epic của phase · L2f project description)** — nếu chưa chạy chúng thì chưa được kết luận `no-sot`. Remedy thường gặp: thêm/sửa `@N` (mở khoá L2e + xếp hạng L2d theo fixVersion), hoặc override bằng `--spec <url> --figma <url>`. **Ghi trống `no-spec` mà không có trace là VI PHẠM** — chính nó làm lỗi này vô hình suốt thời gian qua (xem SKILL.md `[AUTO]`).
 - **Mid-fix phát hiện plan sai** → **defer** (`mid-fix wrong-plan`); không auto re-plan.
 - **Trùng** `root_cause_slug` ticket khác → **skip** (mark `commented`, ghi ticket gốc); không "fix anyway".
 
 ## Khi defer — chuyển sang "Request" rồi ĐI TIẾP (không dừng loop)
-Mỗi khi một ticket bị defer (score <80 / clarify-gap / mid-fix wrong-plan / **unreproducible / no-device**), dưới `--auto`:
+Mỗi khi một ticket bị defer (score <80 / clarify-gap / **no-sot** / mid-fix wrong-plan / **unreproducible / no-device**), dưới `--auto`:
 1. **Transition ticket → `Request`** (REST, `jira_transition`) — đưa nó RA KHỎI `In Progress` và trả về pool triage mở để người (hoặc một lần chạy sau có thêm thông tin) tiếp nhận. **Giữ assignee = dev account** (người đã claim) để biết ai đã phân tích. Verify `now=Request` qua readback. (Nếu workflow không có transition tên `Request`, dùng status mở gần nhất; nếu thực sự không thoát được `In Progress` thì để nguyên + ghi chú trong report.)
 2. Post 1 comment `[VN]` ngắn lên ticket: lý do defer + tóm tắt plan đã có (để người sau làm tiếp), kèm link ledger slug. (`[REST]`, verify 201.)
 3. Giữ nguyên ledger row `analyzed-deferred` (root_cause_slug + summary + files) + thêm vào end-of-run report.

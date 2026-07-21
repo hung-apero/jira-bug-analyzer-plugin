@@ -4,79 +4,17 @@
 
 ## When it runs — discover synchronously, capture in the background
 Two parts, in order:
-1. **Discover (synchronous — §2.0 below).** Resolve the spec + figma links. **Do NOT open with a paste prompt.** Walk the discovery ladder: a STRONG hit is adopted with **zero prompts**; a fuzzy/ambiguous result becomes a **one-tap pick-list**; only when the ladder finds **nothing** does the run fall back to the blocking free-text ask. **Spec + figma remain mandatory to END UP with** — what changed is that the agent now *finds* them instead of demanding them. The resolved links are themselves usable context immediately (phase3 Context-source rule), so analysis never waits for the digest.
+1. **Discover (synchronous — `references/helpers/source-of-truth-discovery.md`).** Resolve the spec + figma links. **Do NOT open with a paste prompt.** Walk the discovery ladder, in **every** mode. **Interactive: a hit is PROPOSED, not imposed** — one-tap confirm on a STRONG hit, pick-list on FUZZY, blocking paste-ask only on NONE. **`--auto`: never asks — it SELF-VERIFIES the candidate** (fetch the page, corroborate project+phase, reject a stub) before adopting. **Spec + figma remain mandatory to END UP with** — what changed is that the agent now *finds* them instead of demanding them, and the dev's job shrinks to one tap. The resolved links are themselves usable context immediately (phase3 Context-source rule), so analysis never waits for the digest.
 2. **Capture (background, non-blocking).** Dispatch the `source-of-truth` subagent to capture the **complete phase ground truth — the FULL spec / figma / external content, NOT scoped to the picked tickets** — as a **background** task (`run_in_background: true`). Do **NOT** WAIT for it before the analyzer (multi: before the fan-out; single: before Fix-3). The one capture serves **every** ticket in the phase — never re-captured per pick, never trimmed to the picked subset. Analyze/Fix read the digest from memory **once it lands**, falling back to the resolved links until then (phase3 Context-source rule). Launch **once per phase per session** (cache the result; skip re-launch on later re-pull turns unless a source is flagged stale **or `metadata.json` still lists a pending external source** → re-attempt the direct read, per the external-sources section below).
 
-## §2.0 — Auto-discovery ladder (run this BEFORE any ask)
-The dev almost always already put the links where the agent can see them — on the ticket. Asking them to paste what is already on the ticket is pure friction. So: **detect first, ask last.**
+## Discovery (§2.0) — EXTRACTED to its own file
+**The whole "find the spec/figma/other refs from the project code + phase" ruleset now lives in `references/helpers/source-of-truth-discovery.md`.** This phase file owns the **capture** (digest the resolved links into memory); that file owns the **discovery** (resolve them in the first place). Do not duplicate it here — read it there.
 
-Walk the rungs **in order and SHORT-CIRCUIT** — the moment spec (and figma) are resolved at STRONG, stop. In the common case the whole ladder costs **one `jira_get_issue` you were making anyway** (with an extra `include`). Every rung is MCP-native; **there is no discovery script**.
-
-| # | Source | How | Tier | Fires in practice? |
-|---|---|---|---|---|
-| **L0** | `<PHASE>/doc/metadata.json` present + fresh | memory (already the cache path today) | — → SOT ready, **no discovery, no ask** | **often** (2nd+ run of a phase) |
-| **L1** | `setup.json` `sotByPhase[<PHASE>]` | `assets/setup-json.sh get <file> sotByPhase.<PHASE>.spec` | **STRONG** | **often — the main win.** Asked once per phase, then never again |
-| **L2** | The picked tickets' `description` + `comments` — Confluence/Figma URLs (**host-agnostic**, see "URL shapes") | free — bodies already in context from the pull. **Read the RAW wiki `description` from `jira_search`, NOT `jira_get_issue`** (see the corruption trap) | **STRONG** | **rarely** — only on tooling-created tickets |
-| **L2b** | The tickets' **remote links** (+ parent) — a Confluence page *explicitly linked to the ticket* | `jira_get_issue(<KEY>, include="remote_links")` → `remote_links[].object.url` + `.title` | **STRONG** | **rarely** — see the coverage reality below |
-| **L2c** | **Labels** — a ticket created by the `confluence-to-jira` tooling carries `auto-from-confluence` + `confluence-<page-slug>` | already in `fields.labels`; the slug names the spec page | **STRONG** | tooling-created tickets only |
-| **L3a** | **Siblings of the previous phase's spec** — the old spec URL hands you the space *and* the parent for free | `confluence_get_page_children(<parent of sotByPhase[phaseN-1].spec>)`, match title `Phase <N>` | MEDIUM | when a prior phase was captured |
-| **L3b** | Confluence search | `confluence_search` (raw CQL): `type=page AND text ~ "<PROJ>" AND title ~ "Phase <N>"`, limit 5, recent first | **FUZZY** | **the primary rung for human-filed bugs** → pick-list |
-| **L4** | Figma links **inside the resolved spec body** | free — the capture already scans the spec for embedded links | **STRONG** | **the only realistic figma source** |
-| **L5** | Figma file whose name matches the project/phase | `mcp__figma-bridge__list_files` | FUZZY | last resort |
-
-### ⚠️ Coverage reality — measured, not assumed (do NOT promise "zero prompts" for bugs)
-Probed against real Apero boards (AIP686 / AIP304 / AIP688), **the tickets this skill actually processes — human-filed bugs — carry no links at all**: `remote_links` is `[]`, there is no Confluence URL in the description or comments, and there are **ZERO `figma.com` URLs anywhere across all three projects** (designs get referenced as `prnt.sc` / `streamable.com` links or inline image attachments instead). Only tickets created by the `confluence-to-jira` tooling (labelled `auto-from-confluence`) carry a spec link.
-
-So be honest about what each rung buys:
-- **L2 / L2b / L2c are a bonus**, not the backbone — they fire on tooling-created tickets and essentially never on a hand-filed bug.
-- **L1 is the real win**: the dev is asked **at most once per phase**, and the answer is then cached *per phase* (never mis-inherited from another phase, which is what happens today).
-- **L3b is the primary discovery rung for a human-filed bug** → it produces a **pick-list**, not a silent adopt.
-- **Figma will usually come from L4** (a link inside the spec) or from the ask. **Do not build a figma rung against ticket bodies** — there is nothing there to find.
-- Expect **NONE → the paste-ask** to still fire on a fresh phase whose spec was never saved. That is correct behavior, not a failure.
-
-### ⚠️ The URL-corruption trap — regex the RAW wiki field, never the converted one
-`jira_get_issue` converts Jira wiki markup → markdown and **silently strips `+` from URLs**:
-`…/display/PROJ/Phase+4%3A+Gamification` → `…/display/PROJ/Phase4%3AGamification` — **which 404s.** Any L2 body-regex that reads `jira_get_issue`'s `description` therefore yields dead links, unrecoverably (you cannot re-insert the spaces post-hoc).
-- **L2b's `remote_links[].object.url` is NOT affected** — it is the only source that returns a correct URL. **Prefer it.**
-- For L2, read the **raw wiki `description` via `jira_search`** (`fields=description`), where the link is still `[Title|https://…/Phase+4%3A+Gamification]`.
-- Match the **wiki-markup link form**, not just a bare URL: `\[([^|\]]+)\|(https?://[^\]\s]+)\]`, and allow `+` and `%XX` in the path.
-- On Jira **Server**, `remote_links[]` entries have **only** `object.url` + `object.title` — `relationship`, `globalId` and `application.name` are absent. Do not branch on them.
-
-**A dead/absent MCP is not an error** — that rung is skipped and the ladder falls through to the next. Discovery must never crash or block the run.
-
-### URL shapes — match HOST-AGNOSTICALLY (Cloud *and* self-hosted Server)
-**Do NOT hardcode `atlassian.net`.** Many orgs (Apero included) run **self-hosted Confluence/Jira Server**, where the spec lives on `confluence.<org>` and the URL shape is completely different from Cloud's. A Cloud-only regex silently detects nothing and the whole ladder collapses to the paste-ask. Match **any** of:
-
-| Product | Cloud | Self-hosted Server |
-|---|---|---|
-| **Confluence** | `<site>.atlassian.net/wiki/spaces/<SPACE>/pages/<ID>/<Title>` | `confluence.<org>/pages/viewpage.action?pageId=<ID>` · `confluence.<org>/display/<SPACE>/<Title>` |
-| **Jira** | `<site>.atlassian.net/browse/<KEY>` | `jira.<org>/browse/<KEY>` |
-
-→ Treat a URL as **Confluence** when its host contains `confluence`, **or** its path contains `/wiki/spaces/`, `/pages/viewpage.action`, or `/display/`. Figma is a fixed SaaS host: `figma.com/(design|file|proto|board)/…`.
-→ The org's actual hosts are already known at runtime — derive them from the configured Jira/Confluence MCP base URLs rather than assuming, and never assume Cloud.
-→ `sotByPhase[…].spec` may be stored as a bare URL string **or** as an object (`{"confluence": "<url>"}` — the shape some existing setups already carry). Accept both on read; write the bare string.
-
-### Tier → behavior
-| Outcome | Do this |
-|---|---|
-| **STRONG, unambiguous** | **Adopt. Zero prompts.** Emit ONE `[VN]` line naming the evidence, so the dev can catch a wrong adoption at a glance: `✅ Tự phát hiện spec: "AIP686 — Phase 3 Reader" (từ remote-link của AIP686-179)` · `✅ Tự phát hiện Figma: "Reader v2" (link nằm trong spec)` |
-| **FUZZY**, or **≥2 STRONG candidates that disagree** | **One-tap `AskUserQuestion` `[OPTIONS]` pick-list** — top 3 candidates, each showing *title · nguồn · vì sao khớp* — plus `Dán link khác` (free-text) and `Không có`. Never a bare paste prompt. *(This is also what finally brings Phase 2 into line with `[OPTIONS]` — the old blank ask violated it.)* |
-| **NONE** (ladder exhausted, nothing found) | Fall back to the **blocking free-text ask, unchanged** — the original behavior, now the last resort instead of the entry point. `spec`+`figma` still cannot be waived here. |
-| **`[AUTO]` (`--auto`)** | STRONG → adopt. FUZZY/NONE → **never ask** (`[AUTO]` no-inline-asks): proceed with whatever was resolved and record the gap in the "what's missing" report + the end-of-run report. Discovery never stalls the auto loop. |
-
-### The `<PHASE>` chicken-and-egg — read this before implementing L3
-The phase is normally *derived from the spec title* (next section) — but L3a/L3b need the phase in order to *find* the spec. Resolve it this way:
-- **`@N` given** → authoritative. It targets discovery; L3a/L3b are enabled.
-- **No `@N`** → run the **ticket-local rungs ONLY** (L1 / L2 / L2b / L4 — none of them need to know the phase), then derive the phase from the found spec's title exactly as today. **Skip blind CQL** — searching for `title ~ "Phase <N>"` without an `N` is meaningless.
-
-### Persist what was resolved
-On adopt (STRONG) or confirm (pick-list), write the phase's entry to **BOTH** the local `.jira-bug/setup.json` mirror **AND** the shared `project/<PROJ>/setup.json`, same turn, via `memory-keeper` (`[BGMEM]` — background, non-blocking):
-```
-setup-json.sh merge-set <file> 'sotByPhase.phase3={"spec":"…","figma":"…","otherRefs":"…","detectedFrom":"remotelink:AIP686-179","confirmedBy":"hungnd","savedAt":"2026-07-14"}'
-```
-**Use the dotted form** — a plain `sotByPhase={…}` REPLACES the object and destroys the other phases' entries. Local-only = the next dev gets re-asked, so the shared push is mandatory, not deferred. Schema + the legacy-flat demotion rule: `references/helpers/memory.md`.
-
-**`--rediscover`** forces a fresh detect: skip the L0 (`metadata.json`) and L1 (`sotByPhase`) short-circuits and re-walk the ladder from L2. Use it when the spec page moved, or a wrong page was adopted.
+What Phase 2 needs from it, in one line each:
+- **Run it FIRST, synchronously, in EVERY mode** (single / multi / team / auto) — it is a *detection* step, never "an ask". It walks memory cache (L0/L1) → the `--spec`/`--figma` override (L0.5) → ticket-local (L2/L2b/L2c) → **PROJECT-level via Jira MCP (L2d/L2e/L2f)** → Confluence (L3a/L3b) → Figma (L4/L5).
+- **It returns `resolved`** (spec + figma + otherRefs, with tier · `detectedFrom` · rung trace) → proceed to the background capture below. **Interactive confirms the adoption with the dev; `--auto` self-verifies instead of asking.**
+- **It returns `none`** → interactive falls back to the blocking paste-ask (spec+figma cannot be waived); `--auto` never asks — it emits the rung trace + remedy and the tickets defer `no-sot`.
+- **Persistence, the `<PHASE>` chicken-and-egg, and the `--spec`/`--figma`/`--rediscover` flags** are all defined there too.
 
 ## Which phase folder — confirm `<PHASE>` from the spec title
 Before writing anything, resolve `<PHASE>` (it scopes every path: `<PHASE>/doc/`, `<PHASE>/session/`, the `phaseX/` fix-branch prefix):
@@ -93,12 +31,12 @@ The **FULL phase content** (never a picked-ticket subset). **One `.md` per sourc
 
 ### metadata.json is how local cache reconciles with remote memory — check it FIRST
 At the start of the gate, reconcile the **local cache against remote memory via `metadata.json`** before doing anything else:
-- **No `metadata.json` in remote memory** → **create one**, and **init the source of truth from the links resolved by the §2.0 discovery ladder** (auto-detected in the common case; the dev is asked only if the ladder returns NONE), then write `metadata.json` from the captured sources. (If the source digests `spec.md`/`figma.md` already exist but the manifest is missing — a legacy capture — offer to build the manifest from the present digests instead of forcing a full re-init; either way the run ends with a `metadata.json`.)
+- **No `metadata.json` in remote memory** → **create one**, and **init the source of truth from the links resolved by the discovery ladder** (`references/helpers/source-of-truth-discovery.md` — auto-detected in the common case; interactive confirms it, `--auto` self-verifies it, and only a NONE triggers the paste-ask), then write `metadata.json` from the captured sources. (If the source digests `spec.md`/`figma.md` already exist but the manifest is missing — a legacy capture — offer to build the manifest from the present digests instead of forcing a full re-init; either way the run ends with a `metadata.json`.)
 - **Local cache outdated vs the remote `metadata.json` version** → **update the local cache from remote** (re-pull / refresh the local mirror) before reading the digests, so analysis runs on the current SOT.
 - **Local matches remote (versions equal, fresh)** → reuse silently.
 
 Runs the memory-keeper `source-of-truth` action (`references/helpers/memory.md`). It reads `metadata.json` to decide per source: present + fresh → reuse; stale (live version newer) → re-capture + bump; absent → capture. Staleness rule + schemas live in `references/helpers/memory.md`.
-- **`spec.md` + `figma.md` are MANDATORY to END UP WITH — there is NO skip/waive for these.** But **do NOT open with a paste prompt** — run the **§2.0 discovery ladder** first; it resolves them with zero prompts in the common case. Only when the ladder returns **NONE** → **ASK the dev to paste the Confluence + Figma link** and BLOCK the *ask* until both are supplied. The dev may not opt out, and "we don't have it" is not an accepted answer for these two — keep asking (or let the dev cancel the run). Once the links are resolved (detected **or** pasted), the **digest capture runs in the background** — do NOT block analysis waiting for the digest; the links are usable context immediately (phase3 Context-source rule). **`[AUTO]` never asks** — see the §2.0 tier table.
+- **`spec.md` + `figma.md` are MANDATORY to END UP WITH — there is NO skip/waive for these.** But **do NOT open with a paste prompt** — run the **discovery ladder** (`references/helpers/source-of-truth-discovery.md`) first; in the common case it finds them and the dev only has to **confirm** (one tap), or nothing at all under `--auto`. Only when the ladder returns **NONE** → **ASK the dev to paste the Confluence + Figma link** and BLOCK the *ask* until both are supplied. The dev may not opt out, and "we don't have it" is not an accepted answer for these two — keep asking (or let the dev cancel the run). Once the links are resolved (detected **or** pasted), the **digest capture runs in the background** — do NOT block analysis waiting for the digest; the links are usable context immediately (phase3 Context-source rule). **`[AUTO]` never asks** — see the §2.0 tier table.
 
 ## External sources inside the spec → each its own peer file `<slug>.md` (read directly; unreadable → flag `pending`, re-try each run; does NOT block — NO request folder)
 A Confluence spec routinely embeds links the Jira/Confluence MCP cannot read — **Google Sheets, Google Drive, external URLs**. **Each such source gets its OWN `.md` file named for it** (e.g. the spec references an "ad script" sheet → `ad_script.md`; an IAP-pricing sheet → `iap_pricing.md`), a peer of `spec.md` at the same `<PHASE>/doc/` level — NOT inlined into `spec.md`, NOT aggregated into one combined file. When distilling the spec, the `source-of-truth` subagent detects every such link, gives it a slug, and **reads it directly**:

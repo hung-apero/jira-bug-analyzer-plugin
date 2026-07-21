@@ -44,8 +44,28 @@ Then invoke the skill:
 ```
 /jira-bug-analyzer AIP686-179     # single mode (ticket key)
 /jira-bug-analyzer AIP686         # multi mode (project/board key)
+/jira-bug-analyzer AIP686 @3      # multi, phase 3 — @N unlocks project-level spec discovery
+/jira-bug-analyzer AIP686 @3 --auto
 /jira-bug-analyzer --manager AIP686
 /jira-bug-analyzer --google-sheet <SHEET_URL> --project AIP686   # sheet board
+```
+
+### Source of truth (spec / Figma)
+
+The skill resolves the phase's spec + Figma **by itself** — it asks Jira, it does not ask you
+to paste links. Given `@N` it reads the project's fixVersions to resolve the phase, then mines
+the phase Epic, a project-wide link sweep, and the project description (≤4 MCP calls, cached
+per phase). Confluence search is the fallback.
+
+Interactive runs **confirm** the hit with a one-tap prompt before adopting it; `--auto` never
+asks and instead **self-verifies** the candidate (fetches the page, checks it names this project
+and this phase, rejects stubs) — and defers the ticket as `no-sot` rather than guessing.
+
+Override when needed:
+
+```
+/jira-bug-analyzer AIP686 @3 --spec <confluence-url> --figma <figma-url>
+/jira-bug-analyzer AIP686 @3 --rediscover     # a wrong page was adopted / the spec moved
 ```
 
 ## Prerequisites

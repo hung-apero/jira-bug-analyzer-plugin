@@ -96,7 +96,7 @@ Every `/jira-bug-analyzer` step maps to ONE owning role. The **Dev owns a contig
 | Init-5 resume / `--resume` reconcile | **Observer** (PR watchers) · **Lead** (batch state) | continuous | — |
 | Pull & list by category (`phase1-init-multi-mode-without-team.md`) | **Lead** | once / round | — |
 | Fix-1 claim (In-Progress lock) + assign | **Lead** | per ticket | → assigns a Dev |
-| Source-of-truth capture (spec/figma/external — background, non-blocking) | **Lead** | once / phase | §2.0 auto-discover spec/figma (ask only if undetected), then background-capture digest |
+| Source-of-truth capture (spec/figma/external — background, non-blocking) | **Lead** | once / phase | §2.0 auto-discover spec/figma (`references/helpers/source-of-truth-discovery.md`; Lead confirms the hit), then background-capture digest |
 | Pre-fix context import (doc digests) | **Dev** | per ticket | — |
 | **Fix-3–Fix-6** fetch → attachments → media → root cause + plan (VN) | **Dev** | per ticket | Dev → Lead: plan |
 | Fix-7 clarify | **Dev** drafts | per ticket | ambiguity → Lead / human |
