@@ -15,7 +15,35 @@
         "name": "hung-apero",
         "email": "huypq.dev@gmail.com"
       },
-      "keywords": ["jira", "bug", "android", "adb", "mcp", "workflow"]
+      "keywords": [
+        "jira",
+        "bug",
+        "android",
+        "adb",
+        "mcp",
+        "workflow"
+      ]
+    },
+    {
+      "name": "learn-app",
+      "source": {
+        "source": "github",
+        "repo": "hung-apero/learn-app-plugin"
+      },
+      "description": "Trợ lý cho PO lắp app Learn từ Feature Store: đọc spec + Figma, lắp feature theo chuẩn kho, test end-to-end có video qua 3 cổng duyệt, kiểm tra theo yêu cầu Google Play.",
+      "version": "0.1.0",
+      "author": {
+        "name": "hung-apero",
+        "email": "huypq.dev@gmail.com"
+      },
+      "keywords": [
+        "android",
+        "learn-sdk",
+        "terakit",
+        "po",
+        "e2e",
+        "maestro"
+      ]
     }
   ]
 }
