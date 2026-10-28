@@ -31,7 +31,7 @@
         "repo": "hung-apero/learn-app-plugin"
       },
       "description": "Tr\u1ee3 l\u00fd cho PO l\u1eafp app Learn t\u1eeb Feature Store: \u0111\u1ecdc spec + Figma, h\u1ecfi PO cho r\u00f5, chia plan, vi\u1ebft code theo t\u1eebng plan, PO duy\u1ec7t 2 l\u1ea7n (spec \u0111\u00e3 l\u00e0m r\u00f5, code cu\u1ed1i), r\u1ed3i m\u1edf PR cho dev. Test ch\u1ea1y ri\u00eang b\u1eb1ng plugin android-test-harness.",
-      "version": "0.44.0",
+      "version": "0.45.0",
       "author": {
         "name": "hung-apero",
         "email": "huypq.dev@gmail.com"
