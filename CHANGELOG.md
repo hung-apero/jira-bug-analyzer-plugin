@@ -2,6 +2,23 @@
 
 Format: one section per version; **Behavior change** lists what a teammate notices; **Migration** says what to do. Metrics per change: `METRICS.md`.
 
+## 1.16.0 — 2026-10-29
+
+Reads the bug report the way QA writes it, and turns the device steps that cost the most time in the A/B runs into commands. A/B on 6 real tickets × 3 description styles (empty as in real tickets / quick and partly wrong / full template): an empty ticket is still fixed 6/6, all 6 matching the real fix; a written description cut total time ~22 % (73.5 / 74.9 vs 95.6 min), mostly on tickets that need a data state or an app language.
+
+### Behavior change
+- **QA ticket template — read when written, never required.** `assets/ticket_brief.py` reads Spec / Figma (a page link is enough, a node link is used when given) / Build / Device / State / Bug / Steps / Actual / Expect / Frequency from the description, with Vietnamese or English headings, numbered or `A -> B` steps, or no headings at all; it prints `BRIEF=n/9 MISSING=…`. A missing or messy field falls back to the old behaviour — never a defer, never a question. The tester's steps are the first repro try; a step naming no exact screen never widens the fix to every code path (pin the path from QA's media first). The analysis and the resolve comment show **"Ticket QA viết → plugin hiểu"** (what came from QA, what was inferred) and **"Ticket thiếu"** (what to add next time). Template for testers: `plugins/jira-bug-analyzer/QA-TICKET-TEMPLATE.md`.
+- **`--auto` does not fix what it has not reproduced** (`REPRO_GATE`, Phase 4): with repro on, no `repro-*` evidence → no worktree; reproduce first or defer. A/B AIP396-465 had skipped the repro and fixed anyway.
+- **App language in one call:** `dev.sh app_lang "Tiếng Việt|Vietnamese"` clears the app's data, picks the language in the First Open picker (closing ads, scrolling), confirms and goes home. Apero apps ignore the system locale. The verifier brief and the STATE rule use it. App data is cleared, so data states are built after it.
+- **Device driving:** `tap_text` scrolls up to 3 times before `NOT_FOUND` (optional nav steps do not); `nav_to` closes an ad covering the screen (`close_ad`) and retries the hop; `nav_home` launches the app before the First Open steps; an APK install that hangs 120 s releases that serial and `free-serial` skips it for 30 min (`INSTALL_SKIPPED`).
+- **Media links:** `fetch-media-links.sh` reads `streamable.com` video pages and unescapes `&amp;` in signed `og:video` URLs (one A/B run never saw the video and deferred a 1-file fix).
+- **`scripts/reopen_report.py`** splits the reopen rate by brief completeness (`auto_brief_full` / `auto_brief_thin`) and by reporter.
+
+### Migration
+- Nothing to configure. Share `QA-TICKET-TEMPLATE.md` with QA if you want faster repros; the most useful fields are the steps (with the exact screen), the state (data, plan, app language) and the screenshot/video.
+- `--auto` runs with repro on now need a device that can reproduce; a ticket that cannot be reproduced is deferred instead of fixed blind.
+- To see whether the template lowers reopens: `scripts/reopen_report.py --since 2026-10-29` after a few weeks of use.
+
 ## 1.15.3 — 2026-10-27
 
 Driven by AAP729 data (16–22/10/2026): `--auto` fixes were reopened 30 % (25/83) vs 16 % (8/50) for the project's other bugs; tickets fixed after a defer were reopened 8/8.
