@@ -7,9 +7,9 @@
 > Rubric anh em: `auto-ticket-pick.md` (Phase 1), `auto-plan-pick.md` (Phase 3).
 
 ## Gate 1 — code-reviewer chấm diff (thay người duyệt)
-- Chấm diff theo **`references/helpers/fix-code-rules.md` (`R1`–`R22`)** — surgical? đúng root-cause? đúng style/layer/design-system? không gây regression? sạch?
+- Chấm diff theo **`references/helpers/fix-code-rules.md` (`R1`–`R25`)** — surgical? đúng root-cause? đúng style/layer/design-system? không gây regression? sạch? **Fix dữ liệu/hành vi: trả lời rõ R23 (hàm đọc có ghi dữ liệu không?) và R24 (mọi đường đọc cùng dữ liệu đã sửa hết chưa?) trong báo cáo; fix chuỗi: R25 (mọi locale có cùng lỗi đã sửa chưa?).**
 - **Không có lỗi `critical`** (clean / chỉ nit/style) → qua Gate 2.
-- **Có lỗi `critical`** (sai logic, security, crash, sai scope, **hoặc vi phạm rule nghiêm trọng**: refactor ngoài scope R2, vá triệu chứng R5–R6, phá Clean-Arch/design-system R11–R13, rủi ro regression R14–R17) → re-fix (Phase 4). **Tính vào retry budget.**
+- **Có lỗi `critical`** (sai logic, security, crash, sai scope, **hoặc vi phạm rule nghiêm trọng**: refactor ngoài scope R2, vá triệu chứng R5–R6, phá Clean-Arch/design-system R11–R13, rủi ro regression R14–R17, ghi khi đọc R23, sót đường đọc R24, sót locale R25) → re-fix (Phase 4). **Tính vào retry budget.**
 - Nit/style → chỉ ghi vào PR body, không chặn.
 
 ## Gate 2 — verifier skill LÀ cổng verify (thay user-verify card)
@@ -22,7 +22,8 @@ Gọi bundled **`android-self-verify`** skill (truyền change summary + repro s
 - **pass** (đúng acceptance, không exception/jank, **có ít nhất 1 file bằng chứng đã lưu** — ảnh hoặc video tùy bug) → carry evidence path sang Phase 6 (PR body + Jira) → PR, không cần người xác nhận. **Pass mà không có file bằng chứng = không hợp lệ** (chụp lại hoặc trả `blocked`).
 - **fail** (bug còn / regression) → re-fix (Phase 4). **Tính vào retry budget.**
 - **blocked** (không tới được màn hình/đúng data state sau **5 lần retry** của skill: mất mạng, kẹt onboarding, không tìm được sách có chapter khóa…) → **defer + report** (`adb-blocked`); không bao giờ báo pass khi chưa quan sát được.
-  - **Ngoại lệ — feature bị remote-config / feature-flag che (không phải lỗi nav/data-state):** trước khi báo blocked, áp dụng `[FEATURE-GATE]` ở Phase 5 Gate 2 — bật cờ về giá trị testing (sửa local, KHÔNG commit), rebuild `assembleAppDevDebug`, verify lại, rồi revert cờ trước `[1COMMIT]`. Chỉ khi vẫn không render được sau khi bật cờ → defer (`feature-gated`), ghi rõ cờ/giá trị QC cần bật để verify.
+  - **Ngoại lệ — feature bị remote-config / feature-flag che (không phải lỗi nav/data-state):** trước khi báo blocked, áp dụng `[FEATURE-GATE]` ở Phase 5 Gate 2 — bật cờ về giá trị testing (sửa local, KHÔNG commit), rebuild `<BUILD_CMD>`, verify lại, rồi revert cờ trước `[1COMMIT]`. Chỉ khi vẫn không render được sau khi bật cờ → defer (`feature-gated`), ghi rõ cờ/giá trị QC cần bật để verify.
+- **Không có máy** (device-lock không cấp được serial) → ticket **hành vi** (verifier = `android-self-verify`: mạng, vòng đời màn hình, xoay, quảng cáo, timing, hiệu năng) → **defer + report** (`no-device`), KHÔNG fail-open sang verify tĩnh. Chỉ ticket **UI thuần** mới được fail-open với cờ `not device-verified` (`references/phase5-verify.md` → Gate 2 bước 1). Lý do: nhóm hành vi bị reopen nhiều nhất khi tự sửa (AAP729, 16–22/10/2026).
 
 > **Retry verify (`--auto`):** skill tự retry cả luồng verify tối đa **5 lần** (relaunch, tắt ad, đổi nội dung/data state, chụp lại) trước khi trả `blocked`. Đây là retry *quan sát*, KHÁC với retry budget re-fix = 2 lần (Gate-1-critical + Gate-2-fail).
 

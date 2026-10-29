@@ -35,7 +35,14 @@ This verification **always runs** when invoked. You may NOT skip or shortcut it 
 > LOCK=<jira-bug-analyzer-skill-dir>/assets/device-lock.sh
 > bash "$LOCK" exec <serial> <owner-token> -- <adb args>   # e.g. -- exec-out screencap -p > shot.png
 > ```
-> A bare `adb -s <serial> …` bypasses the lock and lets a second terminal drive the same device — its screen then lands in YOUR evidence. `NOTOWNER` (exit 3) → stop and report `blocked`; never mint your own token, never fall back to raw adb. Standalone (no `--owner-token` given, no lock in play) → plain `adb -s` is fine.
+> A bare `adb -s <serial> …` bypasses the lock and lets a second terminal drive the same device — its screen then lands in YOUR evidence. `NOTOWNER` (exit 3) → stop and report `blocked`; never mint your own token, never fall back to raw adb. Standalone use outside jira-bug-analyzer (no `--owner-token`, no lock in play) → plain `adb -s` is fine. **Dispatched by jira-bug-analyzer without a token → stop and report `blocked: no owner token`** — the parent skipped the lock (AAP857-112), never drive unlocked.
+
+> **Reach the state the bug needs by the SHORTEST path — and give up fast when stuck (AIP396-475: 11 min, 92 commands, 96 sleeps, never reached the state).**
+> - **Look before acting:** dump the current screen first; the state you need (a saved word, a locked lesson, a filled list) may already exist.
+> - **Find the path, don't wander:** before tapping around, locate the action in code (grep the feature's screens/ViewModels or the SDK sources for the button/event, e.g. `onSaveWord`, `WordSheet`) and in the `uiautomator` dump; then go straight there.
+> - **Never consume content to get somewhere** — don't watch a video to the end, play a whole lesson, or finish a quiz unless the bug is about that flow. Pause, seek, tap the element, or use a shortcut.
+> - **Budget:** no progress toward the target state after ~25 commands or ~5 minutes → stop and return `blocked` with what you tried and where you are stuck (screen + what's missing). The caller (or the dev) supplies the path; that is cheaper than more taps.
+> - The caller's brief may guess a UI path; if the screen does not match the brief, trust the screen and the code, and say so in the verdict.
 
 1. **Confirm the target** — verify the passed `--serial` is connected (`adb -s <serial> get-state` == `device`). Not connected → `blocked` (caller's lock points at a gone device).
 2. **Launch from the worktree** — install + launch the `--variant` build **from the worktree dir** on `--serial`. App already running from the caller's run step → bring it foreground; otherwise launch it.
@@ -43,13 +50,26 @@ This verification **always runs** when invoked. You may NOT skip or shortcut it 
    - Re-run the **exact repro steps** end to end.
    - **Tap/click** the controls involved, **scroll** the relevant lists, navigate the adjacent screens.
    - Exercise **edge cases + adjacent actions** around the change (empty state, back-nav, rotation/config change, re-entry, rapid taps) that could regress.
+   - **State-change scenarios — MANDATORY when the bug touches one of these categories** (QA tests them, so a fix that only passes the happy-path repro gets reopened; these were the most-reopened auto-fixes on AAP729, 16–22/10/2026). Run every scenario whose category matches the ticket, re-check the acceptance criteria after each, and list them under **Exercised** in the verdict. All commands go through `device-lock.sh exec <serial> <owner-token> -- …`:
+
+     | Category | Scenario | `adb` (after `exec … --`) |
+     |---|---|---|
+     | Network | lose network on the screen, wait, restore; also start the screen offline | `shell svc wifi disable` · `shell svc data disable` → wait 5 s → `shell svc wifi enable` · `shell svc data enable` |
+     | Rotation / config | rotate mid-flow and back (video, timers, forms, lists) | `shell settings put system accelerometer_rotation 0` · `shell settings put system user_rotation 1` → `… user_rotation 0` |
+     | Background / foreground | leave and return mid-flow | `shell input keyevent KEYCODE_HOME` → wait 3 s → `shell am start -n <pkg>/<launcher>` |
+     | Process death | kill while backgrounded, reopen | `shell input keyevent KEYCODE_HOME` → `shell am kill <pkg>` → relaunch |
+     | Ads | enter / leave the screen holding the ad 3×, background while an ad shows | navigation taps + the background scenario above |
+     | Timing / per-day data | change the device date across midnight when the bug depends on "today" | `shell cmd alarm set-time <epoch-ms>` (or report `blocked` if not permitted on this device) |
+     | Performance / jank | repeat the action 10× quickly while recording | `shell screenrecord …` + `shell dumpsys gfxinfo <pkg>` before/after |
+
+     Restore the device after each scenario (network on, rotation back to auto with `accelerometer_rotation 1`, real time). A scenario that cannot run on this device → say so in **Exercised**; under `--auto` an unrunnable scenario for the ticket's own category is `blocked`, not `pass`.
    - **Capture SAVED evidence — medium chosen by the bug's nature (not optional under `--auto`):**
-     - **Image** (`adb -s <serial> exec-out screencap -p > <evidence-dir>/<ticket>-<state>.png`) for a **static / visual** bug where one frame is the proof — layout, alignment, color/theme, text/copy, wrong state shown, missing/duplicated element, single-screen correctness. Save a shot at **each meaningful state** (before-fix-path landing → after-fix result).
+     - **Image** (`bash <skill-dir>/assets/shot.sh <serial> <owner-token> <evidence-dir>/verify-<n>-<state>.png --text "<text near the bug>"` — one call, cropped + shrunk; the brief's image budget applies) for a **static / visual** bug where one frame is the proof — layout, alignment, color/theme, text/copy, wrong state shown, missing/duplicated element, single-screen correctness. Save a shot at **each meaningful state** (before-fix-path landing → after-fix result).
      - **Video** (`adb -s <serial> shell screenrecord --time-limit 30 /sdcard/<ticket>.mp4` while you drive the repro, then `adb -s <serial> pull /sdcard/<ticket>.mp4 <evidence-dir>/` and `shell rm /sdcard/<ticket>.mp4`) for a **dynamic / sequential** bug where the *motion or sequence* is the proof — animation/transition, navigation/flow, scroll-jank, gesture, timing/race, media playback, or a **crash repro** (record up to the crash). Start `screenrecord` in the background, perform the exact steps, stop it.
      - **In doubt / crash / flow → capture both** (a video of the sequence + a still of the final correct state). Default to image only for purely static bugs.
    - Still observe **the real screen** at each state via **`[MEDIA]` human-mcp `eyes_analyze({ source: "<saved png>", focus: "..." })`** (text back, no bytes in context; `references/helpers/media-analysis.md`) — fallback Read the saved PNG natively. The saved file IS the evidence, not a guess.
    - **Drive via `adb` only (NOT mobile-mcp).** Use `uiautomator dump` ONLY to locate tap targets (`bounds=...`) — it **cannot read reader/WebView/Compose-canvas content**, so never treat an unchanged uiautomator dump as evidence; confirm by screenshot.
-   - **Screencap-black caveat (load-bearing):** interstitial **ad / onboarding / secure surfaces capture as an all-black PNG** — that's the secure surface, NOT a failure. Press **BACK** to dismiss the interstitial ad, then re-capture the real app screen. App content (reader, lists, bottom-sheets) captures fine. Get **past onboarding/permission/ads first**, then drive the feature. On Git Bash prefix adb with `MSYS_NO_PATHCONV=1` so `/sdcard/...` isn't path-mangled.
+   - **Screencap-black caveat (load-bearing):** interstitial **ad / onboarding / secure surfaces capture as an all-black PNG** — that's the secure surface, NOT a failure. Press **BACK** to dismiss the interstitial ad, then re-capture the real app screen. App content (reader, lists, bottom-sheets) captures fine. Get **past onboarding/permission/ads first**, then drive the feature. **Never tap an ad's body** — it opens a browser/store and leaves the app (AAP857-113 landed in Samsung Internet); close it with its ✕/Skip or BACK, and if you left the app, BACK or relaunch. Still behind onboarding/ads after ~5 commands → `blocked` with where you stand; the caller picks another device or path. On Git Bash prefix adb with `MSYS_NO_PATHCONV=1` so `/sdcard/...` isn't path-mangled.
    - **Reach the correct data state** the repro needs (e.g. a Book whose **next chapter is coin-locked** — a free/`Giá 0` book won't trigger an unlock sheet). If no suitable content/account state is reachable after retries → `blocked`, not `pass`.
 4. **Observe vs criteria** — compare what you saw against the acceptance criteria + spec/figma. The bug must be genuinely gone AND no adjacent regression introduced.
 5. **Verdict** (next section).

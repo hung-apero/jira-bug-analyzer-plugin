@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# lint: no-strict-mode — prints a per-server status (ADDED/EXISTS_SKIPPED/WARN) and keeps going on one server's failure.
 # Set up a missing MCP server from this skill's bundled template
 # (assets/mcp-setup-template.json) by merging its def into user-global ~/.claude.json.
 #
@@ -116,6 +117,9 @@ for n in names:
         if gkeys: env["GOOGLE_GEMINI_API_KEY"]=gkeys   # comma-separated list; human-mcp rotates internally
         elif env.get("GOOGLE_GEMINI_API_KEY","")=="${HUMAN_MCP_GEMINI_KEYS}":
             warned.append(n)                       # placeholder left — needs HUMAN_MCP_GEMINI_KEYS
+    # Templates use a plain `npx` command; Windows (cmd / git-bash) needs the `cmd /c` wrapper to resolve npx.cmd.
+    if sdef.get("command")=="npx" and (os.name=="nt" or os.environ.get("MSYSTEM")):
+        sdef["command"]="cmd"; sdef["args"]=["/c","npx"]+sdef.get("args",[])
     dest["mcpServers"][n]=sdef
     added.append(n)
 json.dump(dest,open(dest_p,"w",encoding="utf-8"),indent=2)
@@ -124,5 +128,10 @@ if skipped: print("EXISTS_SKIPPED: "+", ".join(skipped)+" (use --force to overwr
 if warned:
     if "jira" in warned:      print("WARN: jira JIRA_PERSONAL_TOKEN left as placeholder — pass --token <tok> (Claude Code won't expand ${VAR}).")
     if "human-mcp" in warned: print("WARN: human-mcp GOOGLE_GEMINI_API_KEY left as placeholder — set HUMAN_MCP_GEMINI_KEYS (comma-separated Gemini keys) in .claude/.env before setup; human-mcp rotates them internally.")
+import shutil
+for n in added:
+    cmd=(dest["mcpServers"][n] or {}).get("command","")
+    if cmd and cmd not in ("npx","cmd","uvx") and not shutil.which(cmd):
+        print(f"MISSING_BIN={cmd} (server '{n}' cannot start) INSTALL=\"uv tool install {cmd}\" (or pipx install {cmd})")
 print("RESTART_REQUIRED="+("yes" if added else "no")+" (reload the session so new mcp__* tools connect)")
 PY

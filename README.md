@@ -68,10 +68,19 @@ Override when needed:
 /jira-bug-analyzer AIP686 @3 --rediscover     # a wrong page was adopted / the spec moved
 ```
 
+### Ticket template for QA (optional)
+
+[`plugins/jira-bug-analyzer/QA-TICKET-TEMPLATE.md`](plugins/jira-bug-analyzer/QA-TICKET-TEMPLATE.md) — what to
+write so a bug is reproduced and fixed faster (steps naming the exact screen/source, Expect in plain words). Never
+a gate: a partial or messy ticket is fixed as before.
+
 ## Prerequisites
 
-The skill auto-installs its MCP servers on first run (jira, confluence, figma, human-mcp)
-and prompts for the per-dev `JIRA_PERSONAL_TOKEN`. It also expects, at their gates:
+The skill auto-installs its MCP server *config* on first run (jira, confluence, figma, human-mcp)
+and prompts for the per-dev `JIRA_PERSONAL_TOKEN` (Jira → Profile → Personal Access Tokens). The
+jira/confluence servers run the `mcp-atlassian` executable, which you install once per machine:
+`uv tool install mcp-atlassian` (or `pipx install mcp-atlassian`), then restart Claude Code.
+It also expects, at their gates:
 `gh` (authenticated), `adb` (for on-device verify), and a Gradle Android project for the
 fix/build phases.
 
@@ -106,3 +115,18 @@ git add -A && git commit -m "feat: sync skill" && git push
 ```
 
 Consumers pick up the update with `/plugin marketplace update apero-tools`.
+
+> **Open question (P0):** the TeraKit copy on GitHub has no skill change since 2026-08-11, while this
+> repo shipped v1.4 → v1.15.3. Until the owner confirms where edits happen, the sync script refuses a
+> source older than this repo (no `references/constants.md`) — set `FORCE_OLDER_SRC=1` only to roll back.
+
+### Checks before every release
+
+```bash
+python3 scripts/lint_skill.py   # refs, tags, constants, models, size, secrets, bash — must be 0 errors
+bash tests/run_all.sh           # lint + unit + shell-behavior tests (CI runs the same)
+python3 scripts/metrics.py      # static metrics vs the v1.15.2 baseline and each phase's target
+```
+
+Behavior that only an LLM run can show is checked by hand with `tests/SCENARIOS.md`. Runtime metrics
+(reopen rate, tokens, manager quiet fires) and how to read them: `METRICS.md`. What changed: `CHANGELOG.md`.

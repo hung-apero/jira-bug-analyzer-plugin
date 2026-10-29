@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# lint: no-strict-mode — exit codes ARE the API (3 = BUSY/NOTOWNER); -e would abort before the code is returned.
 # device-lock.sh — serialize adb device access across jira-bug-analyzer sessions/projects.
 #
 # Why a script (not prose): every shell call from the agent is a SEPARATE process, so a
@@ -123,6 +124,14 @@ release() {             # release <serial> <token>
   [ -d "$lock" ] || { echo "FREE $serial"; return 0; }
   local cur; cur=$(field "$lock" owner)
   if [ "${FORCE:-0}" = "1" ] || [ "$cur" = "$token" ] || is_stale "$lock"; then
+    local anim="${TMPDIR:-/tmp}/jba-anim-$serial" k v   # dev.sh switched animations off: put the user's values back
+    if [ -f "$anim" ]; then
+      while IFS='=' read -r k v; do
+        case "$v" in ''|null) adb -s "$serial" shell settings delete global "$k" >/dev/null 2>&1 ;;
+                     *) adb -s "$serial" shell settings put global "$k" "$v" >/dev/null 2>&1 ;; esac
+      done < "$anim"
+      rm -f "$anim"; echo "ANIM=restored $serial"
+    fi
     rm -rf "$lock"; echo "RELEASED $serial"; return 0
   fi
   echo "NOTOWNER $serial held-by=$cur (use FORCE=1 to override)"; return 3
@@ -147,15 +156,40 @@ install() {             # install <serial> <token> <apk> [ttl] — acquire then 
   local token="${2:-unknown}"
   local apk="$3"
   local ttl="${4:-1800}"
+  # a serial whose install timed out recently stalls again (same prompt): skip it while another device is up
+  # (A/B AIP396-465: the analyzer retried the phone after INSTALL_TIMEOUT and lost a second 120 s)
+  if recent_timeout "$serial" && [ "$(connected | grep -vcx "$serial")" -gt 0 ]; then
+    echo "INSTALL_SKIPPED $serial — an install here timed out $(( $(now) - $(cat "$LOCKROOT/$serial.install-timeout") ))s ago; take another serial: device-lock.sh free-serial <token> (it skips this one)"
+    return 4
+  fi
   acquire "$serial" "$token" "$ttl" || return 3
-  adb -s "$serial" install -r -d "$apk"
+  # bounded: on a phone an install can wait forever on a device-side prompt (install-over-USB confirm,
+  # Play Protect scan). A/B rerun AAP857-113: one install on the phone ran >300 s. Timed out -> say so; the
+  # caller releases this serial and takes the next one (free-serial), or asks the dev to tap the prompt.
+  local secs="${INSTALL_DEADLINE:-120}" out; out="$(mktemp)"
+  adb -s "$serial" install -r -d "$apk" > "$out" 2>&1 & local pid=$!
+  ( sleep "$secs"; kill -9 "$pid" ) >/dev/null 2>&1 & local guard=$!
+  wait "$pid" 2>/dev/null; local rc=$?
+  kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null
+  cat "$out"; rm -f "$out"
+  if [ "$rc" -eq 137 ]; then
+    now > "$LOCKROOT/$serial.install-timeout"; release "$serial" "$token" >/dev/null 2>&1
+    echo "INSTALL_TIMEOUT $serial after ${secs}s — the device may be showing an install / Play Protect prompt; released it; take another serial: device-lock.sh free-serial <token> (skips this one for $((INSTALL_SKIP_SECS / 60)) min)"
+    return 4
+  fi
+  [ "$rc" -eq 0 ] || return "$rc"
 }
+
+INSTALL_SKIP_SECS="${INSTALL_SKIP_SECS:-1800}"
+connected() { adb devices | awk 'NR>1 && $2=="device"{print $1}'; }
+recent_timeout() { local f="$LOCKROOT/$1.install-timeout"; [ -f "$f" ] && [ $(( $(now) - $(cat "$f") )) -lt "$INSTALL_SKIP_SECS" ]; }
 
 free_serial() {         # free-serial <token> [ttl] — claim + print the first unlocked connected serial
   local token="${1:-unknown}"
   local ttl="${2:-1800}"
   local s
-  for s in $(adb devices | awk 'NR>1 && $2=="device"{print $1}'); do
+  # a serial whose install timed out recently goes last: it is used only when nothing else is free
+  for s in $(connected | while read -r x; do recent_timeout "$x" && echo "1 $x" || echo "0 $x"; done | sort -s -k1,1n | cut -d' ' -f2); do
     if acquire "$s" "$token" "$ttl" >/dev/null 2>&1; then echo "$s"; return 0; fi
   done
   echo ""; return 3
