@@ -21,7 +21,7 @@ if [ -n "$TEXT" ] && [ ! -f "$TEXT" ]; then T2="$(mktemp)"; printf '%s\n' "$TEXT
 [ -n "$CMD" ] && [ -f "$TEXT" ] || { echo "usage: fetch-media-links.sh {list <text-file> | fetch <text-file> <out-dir>}"; exit 2; }
 # Identify honestly as this tool — never impersonate a browser to get past a site's bot protection.
 # A host that still refuses this agent gets LINK_ERROR, and the dev pastes/attaches the image instead.
-UA="jira-bug-analyzer/1.15.3 (+https://github.com/hung-apero/jira-bug-analyzer-plugin)"
+UA="jira-bug-analyzer/1.16.0 (+https://github.com/hung-apero/jira-bug-analyzer-plugin)"
 MAX="${MEDIA_MAX_BYTES:-52428800}"
 
 # Share-page hosts (resolve via og:image / og:video — streamable.com is a video page) + direct media URLs by extension.
